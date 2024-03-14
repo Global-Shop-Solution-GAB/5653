@@ -1,0 +1,229 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Company Codes")
+Gui.Form..Size(3690,7515)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..ControlBox(False)
+Gui.Form..MousePointer(0)
+Gui.Form.GsGC_Company.Create(GsGridControl)
+Gui.Form.GsGC_Company.Size(3255,6330)
+Gui.Form.GsGC_Company.Position(90,105)
+Gui.Form.cmdSave.Create(Button)
+Gui.Form.cmdSave.Size(855,375)
+Gui.Form.cmdSave.Position(165,6555)
+Gui.Form.cmdSave.Caption("Save")
+Gui.Form.cmdSave.Event(Click,cmdSave_Click)
+Gui.Form.cmdCancel.Create(Button)
+Gui.Form.cmdCancel.Size(855,375)
+Gui.Form.cmdCancel.Position(2430,6555)
+Gui.Form.cmdCancel.Caption("Cancel")
+Gui.Form.cmdCancel.Event(Click,cmdCancel_Click)
+Program.Sub.ScreenSU.End
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+'table layout:  cocode / filepath / copyfrom / copyto
+'data types:    string(3)/varchar(255)/bit/bit/
+f.Intrinsic.Control.Callsub(check_for_files)
+
+f.Intrinsic.Control.SelectCase(v.Caller.Hook)
+	f.Intrinsic.Control.Case(10185)
+		f.Intrinsic.Control.Callsub(check_company)
+	f.Intrinsic.Control.Case(38130)
+		f.Intrinsic.Control.Callsub(check_for_files)
+	f.Intrinsic.Control.CaseElse
+		f.Intrinsic.Control.CallSub(open_maintenance)
+f.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_####_COPY_PARTS.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.Control.CallSub(UNLOAD)
+Program.Sub.Catching.End
+
+Program.Sub.unload.Start
+f.Intrinsic.Control.End
+Program.Sub.unload.End
+
+Program.Sub.cmdSave_Click.Start
+
+Program.Sub.cmdSave_Click.End
+
+Program.Sub.cmdCancel_Click.Start
+
+Program.Sub.cmdCancel_Click.End
+
+Program.Sub.check_company.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.sPart.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+v.Local.sData.Declare
+
+'we need to check which company code we're in.
+'if we're not in HBC, then exit.
+
+f.ODBC.Connection!coredb.opencompanyconnection
+f.Intrinsic.String.Build("select cocode from gcg_5653_maint where cocode = '{0}' and copyfrom = 1",v.Caller.CompanyCode.Trim,v.Local.sSql)
+f.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.sRet)
+'if our company code is not in the copy from list, then exit
+f.Intrinsic.Control.If(v.Local.sRet.IsNullOrWhiteSpace)
+	f.Intrinsic.Control.CallSub(unload)
+f.Intrinsic.Control.EndIf
+
+'since it is in the copyfrom list, lets get the part info we need to copy.
+f.Intrinsic.String.GSSPartString(V.Passed.000007,V.Passed.000008,v.Local.sPart)
+
+f.Intrinsic.String.Build("select part, um_inventory, description, location, product_line, code_source, description_2, description_3 from v_inventory_all where part = '{0}'",v.Local.sPart,V.Local.sSql)
+f.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.sRet)
+f.Intrinsic.String.Build("{0}*!*0.00",v.Local.sRet,v.Local.sData)
+
+'get the list of company codes that we need to copy to
+f.ODBC.Connection!coredb.executeandreturn("select cocode, filepath from gcg_5653_maint where copyto = 1",v.Local.sRet)
+f.ODBC.Connection!coredb.Close
+
+f.Intrinsic.Control.CallSub(create_part_files,"DATA",V.Local.sData,"COMPANY",V.Local.sRet,"PART",V.Local.sPart)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.check_company.End
+
+Program.Sub.create_part_files.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sCompany.Declare
+v.Local.sData.Declare
+v.Local.sFileName.Declare
+v.Local.iCount.Declare
+v.Local.sCon.Declare
+v.Local.sDSN.Declare
+v.Local.sPath.Declare
+v.Local.sRet.Declare
+
+v.Local.sData.Set(v.Args.DATA)
+f.Intrinsic.String.Build("select part from v_inventory_mstr where part = '{0}'",v.Args.PART,v.Local.sSql)
+'split the company codes so we can loop through that data
+f.Intrinsic.String.Split(v.Args.COMPANY,"#$#",v.Local.sCompany)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sCompany.UBound,1)
+	'create the connection to the company code and check to see if the part already exists
+	v.Local.sCon.Set(v.Local.sCompany(v.Local.iCount).LEFT3)
+	f.Intrinsic.String.Build("GLOBAL_{0}",V.Local.sCon,V.Local.sDSN)
+	f.ODBC.Connection![v.Local.sCon].openconnection(v.Local.sDSN,v.Ambient.PUser,v.Ambient.PPass)
+	f.ODBC.Connection![V.Local.sCon].ExecuteAndReturn(v.Local.sSql,v.Local.sRet)
+	f.Intrinsic.Control.If(v.Local.sRet.Trim,<>,v.Args.PART.Trim)
+		F.Intrinsic.String.Split(V.Local.sCompany(V.Local.iCount),"*!*",V.Local.sPath)
+		f.Intrinsic.String.Build("{0}\{1}.txt",v.Local.sPath(1),V.Args.Part,v.Local.sFileName)
+		f.Intrinsic.File.String2File(v.Local.sFileName,v.Local.sData)
+	f.Intrinsic.Control.EndIf
+	f.ODBC.Connection![v.Local.sCon].Close
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+F.Intrinsic.Control.CallSub(unload)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.create_part_files.End
+
+Program.Sub.check_for_files.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.sFileList.Declare
+v.Local.sFile.Declare
+v.Local.sFileName.Declare
+v.Local.iCount.Declare
+v.Local.sPart.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+v.Local.sData.Declare
+
+f.ODBC.Connection!coredb.opencompanyconnection
+f.Intrinsic.String.Build("select cocode from gcg_5653_maint where cocode = '{0}' and copyto = 1",v.Caller.CompanyCode.Trim,v.Local.sSql)
+f.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.sRet)
+'if we're in a copy to company
+f.Intrinsic.Control.If(v.Local.sRet.left3,=,v.Caller.CompanyCode)
+	'yes we are
+	f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+	f.Intrinsic.String.Build("{0}\",v.Local.sRet(1),v.Local.sDir)
+	f.Intrinsic.File.GetFileList(v.Local.sDir,v.Local.sFileList)
+	f.Intrinsic.Control.If(v.Local.sFileList.Length,>,0)
+		f.Intrinsic.String.Split(v.Local.sFileList,":",v.Local.sFile)
+		f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sFile.UBound,1)
+			'split the file name to name and extension
+			f.Intrinsic.String.Split(v.Local.sFile(v.Local.iCount),".",v.Local.sPart)
+			'rebuild the full file name with unc path
+			f.Intrinsic.String.Build("{0}{1}",v.Local.sDir,v.Local.sFile(v.Local.iCount),v.Local.sFileName)
+			'check inventory just to make sure the part hasn't already been added
+			f.Intrinsic.String.Build("select part from v_inventory_mstr where part = '{0}'",v.Local.sPart,v.Local.sSql)
+			f.ODBC.Connection!coredb.executeandReturn(v.Local.sSql,v.Local.sRet)
+			'does the part exist or not.
+			f.Intrinsic.Control.If(v.Local.sRet.Trim,=,v.Local.sPart)
+				'if yes, just delete the file, we don't need it
+				f.Intrinsic.File.DeleteFile(v.Local.sFileName)
+			f.Intrinsic.Control.Else
+				'if no, read the file contents in to a string so we can add the new part to inventory
+				f.Intrinsic.File.File2String(v.Local.sFileName,v.Local.sData)
+				'split the data to an array
+				f.Intrinsic.String.Split(v.Local.sData,"*!*",v.Local.sPart)
+				'add the new part
+				f.Global.Inventory.CreatePart(v.Local.sPart(0),v.Local.sPart(1),v.Local.sPart(2),v.Local.sPart(3),v.Local.sPart(4),v.Local.sPart(5),v.Local.sPart(6),v.Local.sPart(7),v.Local.sPart(8))
+				f.Intrinsic.File.DeleteFile(v.Local.sFileName)
+			f.Intrinsic.Control.EndIf
+			
+		f.Intrinsic.Control.Next(v.Local.iCount)
+		
+	f.Intrinsic.Control.Else
+		f.ODBC.Connection!coredb.close
+		f.Intrinsic.Control.CallSub(unload)
+	f.Intrinsic.Control.EndIf
+	
+f.Intrinsic.Control.Else
+	f.ODBC.Connection!coredb.Close
+	f.Intrinsic.Control.CallSub(unload)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.check_for_files.End
+
+Program.Sub.open_maintenance.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+f.ODBC.Connection!coredb.opencompanyconnection
+
+f.Data.DataTable.CreateFromSQL
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.open_maintenance.End
