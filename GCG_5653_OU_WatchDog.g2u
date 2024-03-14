@@ -1,0 +1,396 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Order Upload WatchDog")
+Gui.Form..Size(4200,1725)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form..MaxButton(False)
+Gui.Form..Sizeable(False)
+Gui.Form.cmdStart.Create(Button)
+Gui.Form.cmdStart.Size(1470,375)
+Gui.Form.cmdStart.Position(345,1335)
+Gui.Form.cmdStart.Caption("Start")
+Gui.Form.cmdStop.Create(Button)
+Gui.Form.cmdStop.Size(1470,375)
+Gui.Form.cmdStop.Position(2115,1335)
+Gui.Form.cmdStop.Caption("Stop")
+Gui.Form.lblStatus.Create(Label,"Upload Watchdog",True,1530,255,0,1140,375,True,0,"Arial",8,-2147483633,0)
+Gui.Form.lblUpdate.Create(Label,"Last Attempted Upload:",True,1935,255,0,195,870,True,0,"Arial",8,-2147483633,0)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global.iCaller.Declare(Long,0)
+v.Global.iPID.Declare(Long,-1)
+v.Global.sSwitches.Declare
+v.Global.sLogFile.Declare
+v.Global.dStart.Declare
+Program.Sub.Preflight.End
+
+'this program runs completely unattended after the initial launch from online update hook 38120
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+V.Local.sSql.Declare(String)
+v.Local.sTitle.Declare(String)
+
+
+
+
+'f.Intrinsic.Control.If(v.Caller.CompanyCode,<>,"PLA")
+'	F.Intrinsic.Control.End
+'f.Intrinsic.Control.EndIf
+
+
+v.Global.dStart.Set(v.Ambient.now)
+
+f.Intrinsic.Control.CallSub(check_directories)
+
+F.Intrinsic.Control.CallSub(ordupl_params_file)
+'this is the PID of online update.
+v.Global.iCaller.Set(v.Caller.PID)
+'check to see if this program is already running.
+F.Intrinsic.Control.CallSub(IsRunning)
+
+
+
+'we need an IPM handler here to work with bom compare and part number generator
+F.Intrinsic.Control.AddEventHandler("IPMDATAIN",ipmReceived)
+
+Gui.Form.cmdStop.Visible(False)
+Gui.Form.cmdStart.Visible(False)
+
+f.Intrinsic.String.Build("({0}) Order Upload Watchdog",v.Caller.CompanyCode,v.Local.sTitle)
+gui.Form..Caption(v.Local.sTitle)
+
+Gui.Form..Show
+
+v.Global.sSwitches.Set(v.Ambient.MyIPMh)
+
+f.Intrinsic.Control.CallSub(check_files)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Form_UnLoad.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+V.Local.sFile.Declare(String)
+V.Local.bRet.Declare(Boolean,False)
+
+'delete the PID file on exit
+f.Intrinsic.String.Build("{0}\CUSTOM\5653\{1}\5653_{1}.pid",v.Caller.GlobalDir,V.Caller.CompanyCode,v.Local.sFile)
+F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bRet)
+F.Intrinsic.Control.If(V.Local.bRet,=,True)
+	F.Intrinsic.File.DeleteFile(V.Local.sFile)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.IsRunning.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare(String)
+v.Local.sFile.Declare(string)
+v.Local.i.Declare(Long)
+v.Local.bCheck.Declare(Boolean)
+v.Local.sText.Declare(String)
+
+'we run the program async so it will not hold up online update - we check the PID and if it is stil running, we end the current program.
+f.Intrinsic.String.Build("{0}\CUSTOM\5653\{1}\5653_{1}.pid",v.Caller.GlobalDir,V.Caller.CompanyCode,v.Local.sFile)
+f.Intrinsic.File.Exists(v.Local.sFile,v.Local.bCheck)
+f.Intrinsic.Control.If(v.Local.bCheck,=,True)
+	f.Intrinsic.File.File2String(v.local.sFile,v.Local.sText)
+	f.Intrinsic.Task.PIDRunning(v.Local.sText.Long,v.Local.bCheck)
+	f.Intrinsic.Control.If(v.Local.bCheck,=,True)
+		'end program
+		F.Intrinsic.Control.End
+
+	f.Intrinsic.Control.Else
+		'create file with current PID and continue running
+		f.Intrinsic.File.String2File(v.Local.sFile,v.Ambient.PID)	
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Else
+
+	'create file with current PID and continue running
+	f.Intrinsic.File.String2File(v.Local.sFile,v.Ambient.PID)
+f.Intrinsic.Control.EndIf
+
+'setting the value of global.slogfile to store for later use
+f.Intrinsic.String.Build("{0}\ORDUP{1}.ERR",V.Caller.FilesDir,V.Caller.CompanyCode,V.Global.sLogFile)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.IsRunning.End
+
+Program.Sub.ipmReceived.Start
+f.Intrinsic.Control.Try
+v.Local.serror.Declare
+v.Local.iIPM.Declare
+v.Local.sMessage.Declare
+
+F.Intrinsic.Control.If(V.Args.message.Left8,=,"Program:")
+	f.Intrinsic.String.Build("The upload watchdog has paused do to an incoming error message {0}{0}{1}",V.Ambient.NewLine,V.Args.message,V.Local.sMessage)
+	F.Intrinsic.UI.Msgbox(v.Local.sMessage,"Error")
+	F.Intrinsic.Control.CallSub(Form_Unload)
+F.Intrinsic.Control.EndIf
+
+
+'update the screen with the latest run time
+F.Intrinsic.String.Build("Last Attempted Upload:  {0}",v.Ambient.Time,V.Local.sMessage)
+GUI.Form.lblUpdate.Caption(v.Local.sMessage)
+v.Global.iPID.Set(-1)
+f.Intrinsic.Control.CallSub(check_files)
+	
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.ipmReceived.End
+
+Program.Sub.Check_Files.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+
+'check for new part files
+f.Intrinsic.Control.CallSub(check_for_parts)
+'check for po uploads
+f.Intrinsic.Control.CallSub(check_for_pos)
+'check for 
+f.Intrinsic.Control.CallSub(check_for_so)
+	
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Check_Files.End
+
+Program.Sub.launch.Start
+f.Intrinsic.Control.Try
+v.Local.serror.Declare
+v.Local.sGab.Declare
+V.Local.bRunning.Declare
+v.Local.iPid.Declare
+v.Local.dDate.Declare
+v.Local.iDays.Declare
+v.Local.bExists.Declare
+
+
+'this is the script we want to call
+F.Intrinsic.String.Build("{0}\GCG_5653_OU_ORDUPL.g2u",V.Caller.GasDir,V.Local.sGab)
+
+'checking to see if the original online update is still running.  If it's not, we're going to close.
+f.Global.General.isOLURunning(v.Local.bRunning)
+'f.Intrinsic.Task.PIDRunning(v.Global.iCaller,v.Local.bRunning)
+f.Intrinsic.Control.If(v.Local.bRunning,=,False)
+	f.Intrinsic.Control.end
+f.Intrinsic.Control.EndIf
+
+'checking the date of the logfile that gets generated by ORDUPL.  If the creation date is older than 6 days, delete the file so ORDUPL will create a new one.
+f.Intrinsic.File.Exists(v.Global.sLogFile,v.Local.bExists)
+f.Intrinsic.Control.If(v.Local.bExists)
+	f.Intrinsic.File.GetFileDateTimeExtended(v.Global.sLogFile,1,True,v.Local.dDate)
+	f.Intrinsic.Date.DateDiff("D",v.Local.dDate,v.Ambient.Date,v.Local.iDays)
+	f.Intrinsic.Control.If(v.Local.iDays,>,6)
+		f.Intrinsic.File.DeleteFile(v.Global.sLogFile)
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Args.FILES.Length,>,0)
+	f.Intrinsic.Control.If(v.Global.iPID,=,-1)
+		f.Global.Task.CallASyncGas(v.Local.sGab,v.Ambient.MyIPMh,v.Local.iPID)
+		f.Intrinsic.UI.Sleep(15)
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.CallSub(check_files)
+
+f.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.launch.End
+
+Program.Sub.catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_5653_OU_WATCHDOG.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+'f.Intrinsic.UI.Msgbox(v.Local.sError)
+f.Intrinsic.Control.End
+Program.Sub.catching.End
+
+Program.Sub.ordupl_params_file.Start
+f.Intrinsic.Control.Try
+v.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.sFile.Declare
+v.Local.sData.Declare
+v.Local.bExists.Declare
+
+'always including the company code so this can run in multiple CCC environments
+f.Intrinsic.String.Build("{0}\WEB_ORDERS\{1}",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sDir)
+f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExists)
+f.Intrinsic.Control.If(v.Local.bExists,=,False)
+'make sure all the directories are there that we need.
+	f.Intrinsic.StringBuilder.Create("PARAMS")
+	f.Intrinsic.File.CreateDir(v.Local.sDir)
+	F.Intrinsic.String.Build("WEB ORDER DIRECTORY   = {0}",V.Local.sDir,v.Local.sData)
+	f.Intrinsic.StringBuilder.append("PARAMS",v.Local.sData,v.Ambient.NewLine)
+	
+	f.Intrinsic.String.Build("{0}\WEB_ERRORS",V.Local.sDir,V.Local.sData)
+	F.Intrinsic.File.CreateDir(V.Local.sData)
+	f.Intrinsic.String.Build("WEB ERROR DIRECTORY   = {0}",v.Local.sData,v.Local.sData)
+	f.Intrinsic.StringBuilder.Append("PARAMS",V.Local.sData,V.Ambient.NewLine)
+	
+	F.Intrinsic.String.Build("{0}\CONVERTED",V.Local.sDir,V.Local.sData)
+	F.Intrinsic.File.CreateDir(V.Local.sData)
+	F.Intrinsic.String.Build("WEB CONVERTED DIR     = {0}",V.Local.sData,V.Local.sData)
+	F.Intrinsic.StringBuilder.Append("PARAMS",v.Local.sData,v.Ambient.NewLine)
+	
+	F.Intrinsic.String.Build("{0}\UPLOADED",V.Local.sDir,V.Local.sData)
+	F.Intrinsic.File.CreateDir(V.Local.sData)
+	f.Intrinsic.String.Build("WEB UPLOADED DIRECTORY= {0}",V.Local.sData,V.Local.sData)
+	F.Intrinsic.StringBuilder.Append("PARAMS",v.Local.sData,v.Ambient.NewLine)
+	
+	F.Intrinsic.String.Build("{0}\GSSPARAM{1}.TXT",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sFile)
+	F.Intrinsic.StringBuilder.ToString("PARAMS",v.Local.sData)
+	f.Intrinsic.StringBuilder.Dispose("PARAMS")
+	f.Intrinsic.File.String2File(V.Local.sFile,V.Local.sData)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.ordupl_params_file.End
+
+Program.Sub.check_directories.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.bDir.Declare
+
+f.Intrinsic.String.Build("{0}\CUSTOM\5653\{1}",V.Caller.GlobalDir,V.Caller.CompanyCode,V.Local.sDir)
+F.Intrinsic.File.DirExists(V.Local.sDir,V.Local.bDir)
+F.Intrinsic.Control.If(V.Local.bDir.Not)
+	F.Intrinsic.File.CreateDir(V.Local.sDir)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.check_directories.End
+
+Program.Sub.check_for_so.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.sFileList.Declare
+v.Local.iDiff.Declare
+v.Local.sFile.Declare
+v.Local.sMessage.Declare
+v.Local.iPid.Declare
+
+f.Intrinsic.Date.DateDiff("N",v.Global.dStart,v.Ambient.Now,v.Local.iDiff)
+
+f.Intrinsic.Control.If(v.Local.iDiff,<,1)
+	F.Intrinsic.String.Build("Last Attempted Upload:  {0}",v.Ambient.Time,V.Local.sMessage)
+	GUI.Form.lblUpdate.Caption(v.Local.sMessage)
+	f.Intrinsic.String.Build("{0}\WEB_ORDERS\{1}\",v.Caller.FilesDir,v.Caller.CompanyCode,v.Local.sDir)
+	f.Intrinsic.File.GetFileList(v.Local.sDir,v.Local.sFileList)
+	f.Intrinsic.Control.CallSub(Launch,"FILES",V.Local.sFileList)
+f.Intrinsic.Control.Else
+	'after 5 minutes, the program is going to relaunch itself and close.
+	f.Intrinsic.String.Build("{0}\CUSTOM\5653\{1}\5653_{1}.pid",v.Caller.GlobalDir,V.Caller.CompanyCode,v.Local.sFile)
+	f.Intrinsic.File.DeleteFile(v.Local.sFile)
+	f.Intrinsic.String.Build("{0}\GCG_5653_OU_WATCHDOG.g2u",v.Caller.GasDir,v.Local.sFile)	
+	f.Global.Task.CallASyncGas(v.Local.sFile,v.Ambient.MyIPMh,v.Local.iPID)
+	f.Intrinsic.Control.End
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.CallSub(check_files)
+
+f.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.check_for_so.End
+
+
+Program.Sub.check_for_parts.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.sFileList.Declare
+v.Local.bFile.Declare
+v.Local.iPid.Declare
+v.Local.sFile.Declare
+
+f.Intrinsic.String.Build("{0}\INTERINV\{1}\",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sDir)
+F.Intrinsic.File.GetFileList(V.Local.sDir,V.Local.sFileList)
+f.Intrinsic.Control.If(v.Local.sFileList.IsNotNullOrWhiteSpace)
+	f.Intrinsic.String.Build("{0}\GCG_5653_PART_UPLOAD.g2u",v.Caller.GasDir,v.Local.sFile)	
+	f.Global.Task.CallASyncGas(v.Local.sFile,v.Ambient.MyIPMh,v.Local.iPID)
+	F.Intrinsic.UI.Sleep(15)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.check_for_parts.End
+
+Program.Sub.check_for_pos.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.sFileList.Declare
+v.Local.bFile.Declare
+v.Local.iPid.Declare
+v.Local.sFile.Declare
+
+
+f.Intrinsic.String.Build("{0}\INTERPOS\{1}\",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sDir)
+F.Intrinsic.File.DirExists(V.Local.sDir,V.Local.bFile)
+F.Intrinsic.Control.If(V.Local.bFile,=,False)
+	f.Intrinsic.File.CreateDir(v.Local.sDir)
+F.Intrinsic.Control.EndIf
+F.Intrinsic.File.GetFileList(V.Local.sDir,V.Local.sFileList)
+f.Intrinsic.Control.If(v.Local.sFileList.IsNotNullOrWhiteSpace)
+	f.Intrinsic.String.Build("{0}\GCG_5653_POUPLOAD.g2u",v.Caller.GasDir,v.Local.sFile)
+
+	f.Global.Task.CallASyncGas(v.Local.sFile,v.Ambient.MyIPMh,v.Local.iPID)
+	f.Intrinsic.UI.Sleep(15)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+
+Program.Sub.check_for_pos.End
