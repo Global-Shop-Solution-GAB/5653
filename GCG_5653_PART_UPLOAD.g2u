@@ -1,0 +1,134 @@
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.bRunning.Declare
+
+
+'communication with the watchdog
+F.Intrinsic.Control.AddEventHandler("IPMDATAIN",ipmReceived)
+
+f.Intrinsic.Control.CallSub(get_files)
+
+f.Intrinsic.Control.CallSub(create_parts,"FILES",V.Args.FILES)
+
+'this will send a message back to the calling program - simply passing the PID.
+f.Intrinsic.Task.PIDRunning(v.Caller.PID,v.Local.bRunning)
+
+f.Intrinsic.Control.If(v.Local.bRunning)
+	f.Intrinsic.IPM.SendMessage(v.Ambient.PID,V.Caller.Switches)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_5653_PART_UPLOAD.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+'f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.IPM.SendMessage(V.Local.sError,V.Caller.Switches)
+F.Intrinsic.Control.CallSub(UNLOAD)
+Program.Sub.Catching.End
+
+Program.Sub.unload.Start
+f.Intrinsic.Control.End
+Program.Sub.unload.End
+
+Program.Sub.get_files.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.sFileList.Declare
+v.Local.sDest.Declare
+v.Local.sFileNames.Declare
+v.Local.iCount.Declare
+v.Local.sSource.Declare
+v.Local.sDestFile.Declare
+v.Local.iRet.Declare
+v.Local.bLocked.Declare
+v.Local.bExists.Declare
+
+'no need to check for files, if we're in this script it's because Files exist and need to be processed
+f.Intrinsic.String.Build("{0}\INTERINV\{1}\",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sDir)
+F.Intrinsic.File.GetFileList(V.Local.sDir,V.Local.sFileList)
+f.Intrinsic.Control.If(v.Local.sFileList.IsNotNullOrWhiteSpace)
+	f.Intrinsic.String.Build("{0}\TEMP",V.Local.sDir,v.Local.sDest)
+	f.Intrinsic.String.Split(v.Local.sFileList,":",v.Local.sFileNames)
+	
+	f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sFileNames.UBound,1)
+		f.Intrinsic.String.Build("{0}\{1}",v.Local.sDir,v.Local.sFileNames(v.Local.iCount),v.Local.sSource)
+		f.Intrinsic.String.Build("{0}\{1}",v.Local.sDest,v.Local.sFileNames(v.Local.iCount),v.Local.sDestFile)
+		f.Intrinsic.File.IsFileLocked(v.Local.sSource,v.Local.bLocked)
+		f.Intrinsic.Control.If(v.Local.bLocked)
+			f.Intrinsic.Control.DoUntil(v.Local.bLocked,=,False)
+				f.Intrinsic.UI.Sleep(5)
+				f.Intrinsic.File.IsFileLocked(v.Local.sSource,v.Local.bLocked)
+			f.Intrinsic.Control.Loop
+		f.Intrinsic.Control.EndIf
+		F.Intrinsic.File.Exists(v.Local.sDestFile,v.Local.bExists)
+		F.Intrinsic.Control.If(v.Local.bExists)
+			F.Intrinsic.File.DeleteFile(V.Local.sDestFile)
+		F.Intrinsic.Control.EndIf
+		f.Intrinsic.File.MoveFile(v.Local.sSource,v.Local.sDestFile,v.Local.iRet)
+	f.Intrinsic.Control.Next(v.Local.iCount)
+
+F.Intrinsic.Variable.AddRV("FILES",V.Local.sFileList)
+
+
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.get_files.End
+
+Program.Sub.create_parts.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sFiles.Declare
+v.Local.sFile.Declare
+v.Local.sPart.Declare
+V.Local.iCount.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+v.Local.bLocked.Declare
+
+f.ODBC.Connection!coredb.opencompanyconnection
+
+F.Intrinsic.String.Split(V.Args.FILES,":",V.Local.sFiles)
+f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sFiles.UBound,1)
+	f.Intrinsic.String.Build("{0}\INTERINV\{1}\TEMP\{2}",V.Caller.FilesDir,V.Caller.CompanyCode,v.Local.sFiles(v.Local.iCount),v.Local.sFile)
+	f.Intrinsic.File.IsFileLocked(v.Local.sFile,v.Local.bLocked)
+	f.Intrinsic.Control.If(v.Local.bLocked)
+		f.Intrinsic.Control.DoUntil(v.Local.bLocked,=,False)
+			f.Intrinsic.UI.Sleep(5)
+			f.Intrinsic.File.IsFileLocked(v.Local.sFile,v.Local.bLocked)
+		f.Intrinsic.Control.Loop
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.File.File2String(v.Local.sFile,v.local.sPart)
+	f.Intrinsic.File.DeleteFile(v.Local.sFile)
+	f.Intrinsic.String.Split(v.Local.sPart,"*!*",v.Local.sPart)
+		'check to make sure the part hasn't been created by some other means (po/so upload perhaps)
+		f.Intrinsic.String.Build("select part from v_inventory_mstr where part = '{0}'",v.Local.sPart(0).Trim,v.Local.sSql)
+		f.ODBC.Connection!coredb.executeandreturn(V.Local.sSql,V.Local.SRET)
+		f.Intrinsic.Control.If(v.Local.sRet.IsNullOrWhiteSpace)
+			f.Global.Inventory.CreatePart(v.Local.sPart(0).trim,v.Local.sPart(1),v.Local.sPart(2),v.Local.sPart(3).v.Local.sPart(4),v.Local.sPart(5),v.Local.sPart(6),v.Local.sPart(7),v.Local.sPart(8),"GCG_5653")
+		f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+F.ODBC.Connection!coredb.close
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.create_parts.End
