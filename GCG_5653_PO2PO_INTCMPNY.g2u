@@ -1,0 +1,453 @@
+Program.Sub.Preflight.Start
+v.Global.sCompany.Declare
+v.Global.sCoCode.Declare
+v.Global.sBuyerCode.Declare
+v.Global.sShipTo.Declare
+v.Global.sName.Declare
+v.Global.sVendor.Declare
+v.Global.bParts.Declare(Boolean,False)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.sLine.Declare
+V.Local.sFields.Declare
+
+f.Intrinsic.Control.CallSub(get_buyer_info)
+
+F.Intrinsic.Control.CallSub(get_current_lines)
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_5653_PO2PO_INTCMPNY.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+Program.Sub.Catching.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+
+Program.Sub.get_buyer_info.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+v.Local.sDsn.Declare
+v.Local.bDsn.Declare
+v.Local.sBuyCode.Declare
+v.Local.sVendor.Declare
+
+
+f.ODBC.Connection!coredb.opencompanyconnection
+	'Get Buyer Code, company code, and shipto to be used in intercompany
+	v.Global.sName.Set(v.Passed.000035.UCase)
+
+	F.Intrinsic.String.Build("Select Buyer_Code, Shipto From V_Buyer_Descriptor Where Upper(NAME) = '{0}';",v.Global.sName,V.Local.sSQL)
+	F.ODBC.Connection!coredb.ExecuteAndReturn(V.Local.sSQL,V.Local.sRet)
+	f.Intrinsic.Control.If(v.Local.sRet.IsNotNullOrWhiteSpace)
+		f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+		
+		'we're compairing the buyers company code to the current company code
+		'if they are the same, then this script should exit
+		v.Global.sBuyerCode.Set(v.Local.sRet(0))
+		v.Global.sCoCode.Set(v.Local.sRet(1).LEFT3)
+		v.Global.sShipTo.Set(v.Local.sRet(1))
+		
+		f.Intrinsic.Control.If(v.Global.sCoCode,=,v.Caller.CompanyCode)
+			f.ODBC.Connection!coredb.Close
+			F.Intrinsic.Control.CallSub(unload)
+		f.Intrinsic.Control.EndIf
+
+		'if the buyer code represents a different company (which is what we want) then we have to validate that the
+		'first 3 characters are a valid company  code and a valid DSN
+		F.Intrinsic.String.Build("GLOBAL_{0}",v.Global.sCoCode,V.Local.sDSN)
+		f.ODBC.Misc.IsDSN(v.Local.sDsn,v.Local.bDSN)
+		f.Intrinsic.Control.If(V.Local.bDsn,=,False)
+			'not a valid code - exit
+			F.Intrinsic.UI.Msgbox("Buyer doesn't have a valid ID. The first 3 characters of the ShipTo ID need to represent the company they work for and the last 3 representing the location they work at. Intercompany file not generated.","BUYER ERROR")
+			f.ODBC.Connection!coredb.Close
+			f.Intrinsic.Control.CallSub(unload)
+		f.Intrinsic.Control.EndIf
+	
+
+		'get the vendor information that we'll need to write the po in the other company.
+		f.Intrinsic.String.Build("SELECT ORGN_VENDOR FROM V_INTERCMPNY_XREF WHERE ORGN_CMPNY = '{0}' AND DEST_CMPNY = '{1}'",v.Global.sCoCode,v.Caller.CompanyCode,v.Local.sSql)
+		f.ODBC.Connection!coredb.executeandReturn(v.Local.sSql,v.Global.sVendor)
+		
+	f.Intrinsic.Control.Else
+		f.Intrinsic.Control.CallSub(unload)
+	f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.get_buyer_info.End
+
+Program.Sub.get_current_lines.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+V.Local.sPO.Declare
+v.Local.iCount.Declare
+v.Local.sDSN.Declare
+v.Local.sRet.Declare
+v.Local.sPartData.Declare
+V.Local.sPOData.Declare
+v.Local.iPO.Declare
+
+
+
+f.Intrinsic.String.LPad(v.Passed.000008,"0",7,v.Local.sPO)
+
+'getting the lines from the current po, replacing the user_1 field as cost so the po in the purchasing company reflects the sell price of the selling company.
+f.Intrinsic.String.Build("select LEFT(RECORD_NO,3) AS LINE, PART, LOCATION, DESCRIPTION, USER_1 as COST, UM_INVENTORY as UM, PRODUCT_LINE as PL, DATE_DUE_LINE as DATE_DUE, QTY_ORDER AS QTY, GL_ACCOUNT_LINE FROM V_PO_LINES where PURCHASE_ORDER = '{0}' and USER_5 = '' order by LINE",V.Local.sPO,V.Local.sSql)
+
+F.Data.DataTable.CreateFromSQL("POLINE","COREDB",V.Local.sSql,True)
+
+f.Intrinsic.Control.If(v.DataTable.POLINE.RowCount,<,1)
+	f.ODBC.Connection!coredb.Close
+	f.Intrinsic.Control.CallSub(unload)
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.UI.InvokeWaitDialog("Creating intercompany files....")
+
+'now we need a connection to the other company code to get vendor and ship to info
+'as well as the next po number
+f.Intrinsic.String.Build("GLOBAL_{0}",v.Global.sCoCode,v.Local.sDSN)
+f.ODBC.Connection!con.openconnection(v.Local.sDSN,v.Ambient.PUser,v.Ambient.PPass)
+
+'get the next PO number in the destination company
+F.ODBC.Connection!con.ExecuteAndReturn("Select Last_PO_Num From Last_PO Where Ass_Sys = 'PUR' And Ass_Sub_Sys = 'CTL';",V.Local.iPO)
+f.Intrinsic.String.LPad(v.Local.iPO.++,"0",7,v.Local.sPO)
+'update the last po number
+f.Intrinsic.String.Build("update Last_PO set Last_PO_Num = '{0}' where Ass_Sys = 'PUR' And Ass_Sub_Sys = 'CTL'",V.Local.sPO,V.Local.sSql)
+f.ODBC.Connection!con.Execute(v.Local.sSql)
+
+
+'passing args to build the PO data
+F.Intrinsic.Control.For(V.Local.iCount,0,v.DataTable.POLINE.RowCount--,1)
+	F.Intrinsic.Control.CallSub(build_po_data,"PO",v.Local.sPO,"POLine",v.DataTable.POLINE(v.Local.iCount).LINE!FIELDVALTRIM,"Vendor",v.Global.sVendor,"DueDate",v.DataTable.POLINE(v.Local.iCount).DATE_DUE!FieldValTrim,"Part",v.DataTable.POLINE(v.Local.iCount).Part!FieldValTrim,"Loc",v.DataTable.POLINE(v.Local.iCount).Location!FieldValTrim,"Description",v.DataTable.POLINE(v.Local.iCount).Description!FieldValTrim,"UM",v.DataTable.POLINE(v.Local.iCount).UM!FieldValTrim,"PL",v.DataTable.POLINE(v.Local.iCount).PL!FieldValTrim,"Cost",v.DataTable.POLINE(v.Local.iCount).Cost!FieldValTrim,"Qty",v.DataTable.POLINE(v.Local.iCount).QTY!FieldValTrim,"BuyerCode",v.Global.sBuyerCode,"GLAccount",v.DataTable.POLINE(v.Local.iCount).GL_ACCOUNT_LINE!FieldValTrim)
+	
+	'return from build_po_data
+	f.Intrinsic.Control.If(v.Local.iCount,=,0)
+		v.Local.sPOData.Set(v.Args.POTEXT)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}{1}",V.Local.sPOData,V.Args.POTEXT,V.Local.sPOData)
+	f.Intrinsic.Control.EndIf
+	
+	'check if the part number exists in the destination company.  If not, we'll add some information to the file
+	f.Intrinsic.String.Build("select part from v_inventory_mstr where part = '{0}'",v.DataTable.POLINE(v.Local.iCount).PART!FIELDVALTRIM,v.Local.sSql)
+	f.ODBC.Connection!con.executeandreturn(v.Local.sSql,v.Local.sRet)
+	f.Intrinsic.Control.If(v.Local.sRet.IsNullOrWhiteSpace)
+		'set the global variable so we know to include part data in the file
+		v.Global.bParts.Set(True)
+		'get the part information from the current company code
+		f.Intrinsic.String.Build("select part, um_inventory, description, location, product_line, code_source, description_2, description_3 from v_inventory_all where part = '{0}'",v.DataTable.POLINE(v.Local.iCount).PART!FIELDVALTRIM,V.Local.sSql)
+		F.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Local.iCount,=,0)
+			f.Intrinsic.String.Build("{0}*!*{1}",v.Local.sRet,v.DataTable.POLINE(v.Local.iCount).COST!FIELDVALTRIM,V.Local.sPartData)
+		f.Intrinsic.Control.Else
+			f.Intrinsic.String.Build("{0}{1}{2}*!*{3}",v.Local.sPartData,V.Ambient.NewLine,v.Local.sRet,v.DataTable.POLINE(v.Local.iCount).COST!FIELDVALTRIM,V.Local.sPartData)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+'done building PO Data. Combine PartData and PO data if PartData has information
+F.Intrinsic.Control.If(V.Global.bParts)
+	F.Intrinsic.String.Build("{0}@@@{1}{2}",V.Local.sPOData,V.Ambient.NewLine,V.Local.sPartData,V.Local.sPartData)
+	f.Intrinsic.Control.CallSub(buildfile,"DATA",V.Local.sPartData)
+f.Intrinsic.Control.Else
+	f.Intrinsic.Control.CallSub(buildfile,"DATA",V.Local.sPOData)
+F.Intrinsic.Control.EndIf
+
+'update the PO lines that we've processed so we don't process them again
+f.Intrinsic.String.Build("UPDATE PO_LINES SET USER_5 = 'INTER CO DONE' WHERE PURCHASE_ORDER = '{0}' AND PO_TYPE = 'O' AND USER_5 = ''",V.Local.sPO,V.Local.sSql)
+f.ODBC.Connection!coredb.execute(v.Local.sSql)
+
+F.ODBC.Connection!coredb.Close
+f.ODBC.Connection!con.Close
+
+F.Intrinsic.UI.CloseWaitDialog
+F.Intrinsic.String.Build("INTERCOMPANY PO CREATED FOR {0}",V.Global.sCoCode,V.Local.sSql)
+F.Intrinsic.UI.Msgbox(V.Local.sSql,"COMPLETE!")
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.get_current_lines.End
+
+Program.Sub.build_po_data.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+	V.Local.sSQL.Declare
+	V.Local.sVenName.Declare
+	V.Local.sVenAdd1.Declare
+	V.Local.sVenAdd2.Declare
+	V.Local.sVenState.Declare
+	V.Local.sVenZip.Declare
+	V.Local.sVenCity.Declare
+	V.Local.sVenAttn.Declare
+	V.Local.sVenGL.Declare
+	V.Local.sGL.Declare
+	V.Local.sCurrency.Declare
+	V.local.sPODate.Declare
+	V.local.sPODueDate.Declare
+	V.Local.sRet.Declare
+	V.Local.sTemp.Declare
+	V.Local.sTempFull.Declare
+	v.Local.sShipSeq.Declare
+	V.Local.sShipName.Declare
+	V.Local.sShipAdd1.Declare
+	V.Local.sShipAdd2.Declare
+	V.Local.sShipState.Declare
+	V.Local.sShipZip.Declare
+	V.Local.sShipCity.Declare
+	V.Local.sShipAttn.Declare
+	v.Local.sPO.Declare
+
+	F.Intrinsic.Control.If(V.Args.POLine,=,001)
+	'------------------------------------------------------------# Header #-------------------------------------------------------------
+		'vendor info
+		F.Intrinsic.String.Build("Select A.Vendor,A.Name_Vendor,A.Address1,A.Address2,A.City,A.Rec,A.State,A.Code_Zip,A.Country,A.Attention,A.Normal_GL_Account,B.Default_Currency As CurrencyCode From V_Vendor_Master A Left Join V_Vendor_Intl As B on A.Vendor = B.Vendor Where A.Vendor = '{0}';",V.Global.sVendor,V.Local.sSQL)
+		F.ODBC.Connection!con.OpenLocalRecordsetRO("rstVend",V.Local.sSQL)
+		F.Intrinsic.Control.If(V.ODBC.Con!rstVend.EOF,=,False)
+			V.Local.sVenName.set(V.ODBC.Con!rstVend.FieldVal!Name_Vendor)
+			V.Local.sVenAdd1.set(V.ODBC.Con!rstVend.FieldVal!Address1)
+			V.Local.sVenAdd2.set(V.ODBC.Con!rstVend.FieldVal!Address2)
+			V.Local.sVenState.set(V.ODBC.Con!rstVend.FieldVal!State)
+			V.Local.sVenZip.set(V.ODBC.Con!rstVend.FieldVal!Code_Zip)
+			V.Local.sVenCity.set(V.ODBC.Con!rstVend.FieldVal!City)
+			V.Local.sVenAttn.set(V.ODBC.Con!rstVend.FieldVal!Attention)
+			V.Local.sVenGL.set(V.ODBC.Con!rstVend.FieldVal!Normal_GL_Account)
+			V.Local.sCurrency.set(V.ODBC.Con!rstVend.FieldVal!CurrencyCode)
+		F.Intrinsic.Control.EndIf
+		F.ODBC.Con!rstVend.Close
+		'ship to info
+		f.Intrinsic.String.Build("select SHIPTO FROM V_BUYER_DESCRIPTOR WHERE BUYER_CODE = '{0}'",V.Global.sBuyerCode,V.Local.sSQL)
+		F.ODBC.connection!con.executeandreturn(v.Local.sSQL,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Local.sRet.IsNullOrWhiteSpace)
+			f.Intrinsic.String.Build("The buyer {1} in company code {0} either doesn't exist or is not tied to a ship to address. The export will not be generated.",V.Global.sCoCode,v.Global.sName,v.Local.sSQL)
+			f.Intrinsic.UI.Msgbox(v.Local.sSQL,"BUYER ERROR")
+			f.ODBC.Connection!con.Close
+			f.ODBC.Connection!coredb.Close
+			f.Intrinsic.Control.CallSub(unload)
+		f.Intrinsic.Control.EndIf
+		f.Intrinsic.String.build("select name, adrs1, adrs2, city, state, zip, attn from V_PO_MULTI_SHIP where SEQ = '{0}'",v.Local.sRet.Trim,v.Local.sSQL)
+		f.ODBC.Connection!con.OpenLocalRecordSetRO("rstShip",v.Local.sSQL)
+		f.Intrinsic.Control.If(v.ODBC.con!rstShip.EOF,=,False)
+			v.Local.sShipName.Set(v.ODBC.con!rstShip.FieldVal!name)
+			v.Local.sShipAdd1.Set(v.ODBC.con!rstShip.FieldVal!adrs1)
+			v.Local.sShipAdd2.Set(v.ODBC.con!rstShip.FieldVal!adrs2)
+			v.Local.sShipCity.Set(v.ODBC.con!rstShip.FieldVal!city)
+			v.Local.sShipState.Set(v.ODBC.con!rstShip.FieldVal!state)
+			v.Local.sShipZip.Set(v.ODBC.con!rstShip.FieldVal!zip)
+			v.Local.sShipAttn.Set(v.ODBC.con!rstShip.FieldVal!attn)
+		f.Intrinsic.Control.EndIf
+		f.ODBC.con!rstShip.Close
+		'PO Date
+		F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYY",V.local.sPODate)
+		'RequiredDate,DueDate
+		F.Intrinsic.String.Format(V.Args.DueDate,"MMDDYY",V.local.sPODueDate)
+	'A Record
+		'PO,Rec Type  
+		F.Intrinsic.String.Concat(V.Args.PO,"  A",V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",12,V.Local.sTemp)
+		'Buyer 
+		V.Local.sRet.Set("")
+		F.Intrinsic.String.RPad(V.Args.BuyerCode," ",7,V.Local.sRet)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sRet,V.Local.sTemp)
+		'Ship Via 
+		V.Local.sRet.Set("")
+		F.Intrinsic.String.RPad(V.Local.sRet," ",15,V.Local.sRet)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sRet,V.Local.sTemp)
+		'FOB  
+		V.Local.sRet.Set("")
+		F.Intrinsic.String.RPad(V.Local.sRet," ",15,V.Local.sRet)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sRet,V.Local.sTemp)
+		'Terms 
+		V.Local.sRet.Set("")
+		F.Intrinsic.String.RPad(V.Local.sRet," ",12,V.Local.sRet)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sRet,V.Local.sTemp)
+		'PO Date 
+		F.Intrinsic.String.Rpad(V.Local.sTemp," ",195,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.local.sPODate,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",207,V.Local.sTemp)
+		'Date Due
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.local.sPODueDate,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",229,V.Local.sTemp)
+		'GL Account
+		V.Local.sGL.Set(V.Args.GLAccount)
+		F.Intrinsic.Control.If(V.Local.sGL.Trim,=,"")
+			V.Local.sGL.Set(V.Local.sVenGL)
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sGL,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",267,V.Local.sTemp)
+		'Vendor #
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.Vendor,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",298,V.Local.sTemp)
+		'User 1 - storing the source company code and po number.	
+		f.Intrinsic.String.LPad(v.Passed.000008,"0",7,v.Local.sPO)
+		f.Intrinsic.String.Concat(v.Caller.CompanyCode,":  PO:  ",v.Local.sPO,v.Local.sPO)
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sPO,V.Local.sTemp)
+		f.Intrinsic.String.RPad(v.Local.sTemp," ",328,v.Local.sTemp)
+		'New Line
+		F.Intrinsic.String.Concat(V.Local.sTempFull,V.Local.sTemp,V.Ambient.NewLine,V.Local.sTempFull)
+	'B Record
+		'PO,Rec Type,Name Vendor
+		F.Intrinsic.String.Concat(V.Args.PO,"  B",V.Local.sVenName,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",40,V.Local.sTemp)
+		'Vendor Address
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sVenAdd1,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",70,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sVenAdd2,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",190,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sVenCity,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",210,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sVenState,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",212,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sVenZip,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",237,V.Local.sTemp)
+		'Attention
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sVenAttn,V.Local.sTemp)
+		'New Line
+		F.Intrinsic.String.Concat(V.Local.sTempFull,V.Local.sTemp,V.Ambient.NewLine,V.Local.sTempFull)
+	'C Record
+		F.Intrinsic.String.Concat(V.Args.PO,"  C",v.Local.sShipName,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",40,V.Local.sTemp)
+		'Vendor Address
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sShipAdd1,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",70,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sShipAdd2,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",190,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sShipCity,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",210,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sShipState,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",212,V.Local.sTemp)
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sShipZip,V.Local.sTemp)
+		F.Intrinsic.String.RPad(V.Local.sTemp," ",237,V.Local.sTemp)
+		'Attention
+		F.Intrinsic.String.Concat(V.Local.sTemp,v.Local.sShipAttn,V.Local.sTemp)
+		'New Line
+		F.Intrinsic.String.Concat(V.Local.sTempFull,V.Local.sTemp,V.Ambient.NewLine,V.Local.sTempFull)
+	F.Intrinsic.Control.EndIf
+
+	
+	'--------------------------------------------------------------# Line #----------------------------------------------------------------
+	'PO, Line,Part
+	F.Intrinsic.String.Concat(V.Args.PO,V.Args.POLine,V.Args.Part,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",30,V.Local.sTemp)
+	'Loc
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.Loc,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",32,V.Local.sTemp)
+	'Description
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.Description.Trim,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",62,V.Local.sTemp)
+	'UM
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.UM.Trim,V.Local.sTemp)
+	F.Intrinsic.String.Rpad(V.Local.sTemp," ",65,V.Local.sTemp)
+	'Work Order Number
+	F.Intrinsic.String.Concat(V.Local.sTemp,"",V.Local.sTemp)
+	F.Intrinsic.String.Rpad(V.Local.sTemp," ",71,V.Local.sTemp)
+	'Work Order Sequence
+	F.Intrinsic.String.Concat(V.Local.sTemp,"",V.Local.sTemp)
+	F.Intrinsic.String.Rpad(V.Local.sTemp," ",77,V.Local.sTemp)
+	'Requisition Number
+	F.Intrinsic.Control.If(V.Args.ReqNo.Trim,=,"")
+		F.Intrinsic.String.Concat(V.Local.sTemp,"      ",V.Local.sTemp)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.ReqNo,V.Local.sTemp)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Rpad(V.Local.sTemp," ",87,V.Local.sTemp)
+	'Taxable
+	F.Intrinsic.String.Concat(V.Local.sTemp,"",V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",100,V.Local.sTemp)
+	'GL Account
+	F.Intrinsic.String.Concat(V.Local.sTemp,"",V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",121,V.Local.sTemp)
+	'PL
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.PL.Trim,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",124,V.Local.sTemp)
+	'Required Date Line DueDate
+	F.Intrinsic.String.Format(V.Args.DueDate,"MMDDYY",V.local.sPODueDate)
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.local.sPODueDate,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",136,V.Local.sTemp)
+	'Cost
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.Cost,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",168,V.Local.sTemp)
+	'Qty
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.Qty,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",266,V.Local.sTemp)
+	'Work Order Sequence
+	F.Intrinsic.String.Concat(V.Local.sTemp,"",V.Local.sTemp)
+	F.Intrinsic.String.Rpad(V.Local.sTemp," ",339,V.Local.sTemp)
+	'Currency
+	F.Intrinsic.String.Concat(V.Local.sTemp,V.Local.sCurrency,V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",478,V.Local.sTemp)
+	'user field 5 on po line
+	f.Intrinsic.String.Concat(v.Local.sTemp,"INTER CO DONE",V.Local.sTemp)
+	F.Intrinsic.String.RPad(V.Local.sTemp," ",548,V.Local.sTemp)
+	'Requisition Line
+	F.Intrinsic.Control.If(V.Args.ReqLine.Trim,=,"")
+		F.Intrinsic.String.Concat(V.Local.sTemp,"   ",V.Local.sTemp)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Concat(V.Local.sTemp,V.Args.ReqLine,V.Local.sTemp)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Rpad(V.Local.sTemp," ",551,V.Local.sTemp)
+	'Add line to variable that will be written to PURORDER.txt
+	F.Intrinsic.String.Concat(V.Local.sTempFull,V.Local.sTemp,V.Ambient.NewLine,V.Local.sTempFull)
+	
+	'Return upload text
+	F.Intrinsic.Variable.AddRV("POTEXT",V.Local.sTempFull)
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.build_po_data.End
+
+Program.Sub.buildfile.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.sDir.Declare
+v.Local.sFile.Declare
+V.Local.bExists.Declare
+v.Local.sData.Declare
+
+v.Local.sData.Set(v.Args.DATA)
+
+f.Intrinsic.String.Build("{0}\INTERPOS\{1}",V.Caller.FilesDir,v.Global.sCoCode,V.Local.sDir)
+F.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExists)
+f.Intrinsic.Control.If(v.Local.bExists,=,False)
+	f.Intrinsic.File.CreateDir(v.Local.sDir)
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.If(v.Global.bParts)
+	F.Intrinsic.String.Build("{0}\PO{1}-WITHPARTS.TXT",V.Local.sDir,V.Ambient.Date.FormatYYYMMDD,V.Local.sFile)
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sData)
+F.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("{0}\PO{1}.TXT",V.Local.sDir,V.Ambient.Date.FormatYYYYMMDD,V.Local.sFile)
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sData)
+f.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.buildfile.End
