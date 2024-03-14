@@ -1,0 +1,246 @@
+Program.Sub.Preflight.Start
+V.Global.sIntCoCode.Declare
+V.Global.sPO.Declare
+V.Global.sAltDsn.Declare
+v.Global.sVendor.Declare
+Program.External.Include.Library("GCG_5653_UPLPUROR.lib")
+Program.Sub.Preflight.End
+'this script is used to export the current sales order and generate a file that can be uploaded to an inter-company purchase order as sometimes the sales order comes before the purchase order with this company.
+'attach to hook 11872
+'include library 
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+'f.Intrinsic.Control.CallSub(save_inter_co)
+
+
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,11872)
+	F.Intrinsic.Control.CallSub(check_inter_co)
+	f.Intrinsic.Control.CallSub(build_header_BandC)
+	f.Intrinsic.Control.CallSub(build_lines)
+	F.Intrinsic.Control.CallSub(export)
+	f.Intrinsic.Control.CallSub(save_inter_co)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_5653_EXPSALES.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.Control.CallSub(unload)
+Program.Sub.Catching.End
+
+Program.Sub.check_inter_co.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+V.Local.sOrder.Declare
+V.Local.sOrderDate.Declare
+v.Local.sDueDate.Declare
+V.Local.sOrderYear.Declare
+v.Local.sDueYear.Declare
+
+'check that the customer is an inter-company partner.
+'technically, we are in the destination company and working backwards to the purchasing company
+f.ODBC.Connection!coredb.opencompanyconnection
+'format the dates
+F.Intrinsic.String.Mid(V.Passed.000023,5,2,V.Local.sOrderDate)
+F.Intrinsic.String.Mid(V.Passed.000024,5,2,V.Local.sDueDate)
+F.Intrinsic.String.Mid(V.Passed.000023,3,2,V.Local.sOrderYear)
+f.Intrinsic.String.Mid(v.Passed.000024,3,2,v.Local.sDueYear)
+F.Intrinsic.String.Build("{0}{1}{2}",V.Local.sOrderDate,V.Passed.000023.RIGHT2,v.Local.sOrderYear,v.Local.sOrderDate)
+F.Intrinsic.String.Build("{0}{1}{2}",v.Local.sDueDate,v.Passed.000024.Right2,v.Local.sDueYear,v.Local.sDueDate)
+
+f.Intrinsic.String.LPad(v.Passed.000003,"0",7,v.Local.sOrder)
+
+f.Intrinsic.String.Build("select left(record_no,3) as line, part, location, description, UM_ORDER, CAST(date_item_prom as CHAR(10)) AS DATE, price, qty_ordered from v_order_lines where order_no = '{0}' and user_5 = ''",v.Local.sOrder,v.Local.sSql)
+f.Data.DataTable.CreateFromSQL("SOLINES","COREDB",V.Local.sSql,True)
+
+f.Intrinsic.String.Build("select DEST_ORDER_NO FROM V_INTCMP_SO_EVNT WHERE DEST_ORDER_NO = '{0}'",V.Local.sOrder,V.Local.sSql)
+F.ODBC.Connection!COREDB.EXECUTEANDRETURN(v.Local.sSql,v.Local.sret)
+
+F.Intrinsic.Control.If(V.Local.sRet,=,V.Local.sOrder,AND,V.DataTable.SOLINES.RowCount,=,0)
+	F.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndIf
+
+f.Intrinsic.String.Build("select ORGN_CMPNY, ORGN_VENDOR from V_INTERCMPNY_XREF where DEST_CMPNY = '{0}' AND DEST_CUST_NO = '{1}'",V.Caller.CompanyCode,V.Passed.000006,V.Local.sSql)
+F.ODBC.Connection!COREDB.EXECUTEANDRETURN(v.Local.sSql,v.Local.sret)
+F.Intrinsic.Control.If(V.Local.sRet.Length,>,0)
+	F.Intrinsic.String.Split(V.Local.sRet,"*!*",V.Local.sRet)
+	V.Global.sIntCoCode.Set(v.Local.sRet(0))
+	V.Global.sVendor.Set(v.Local.sRet(1))
+	'we have the company code that we'll eventually upload that purchase order to, and the vendor code to use.
+	'build the reference value to store in the PO header user 2
+	f.Intrinsic.Control.CallSub(get_po_num)
+	
+	f.Intrinsic.String.Build("{0}:  SO: {1}",V.Caller.CompanyCode,v.Local.sOrder,v.Local.sOrder)
+	f.Data.DataTable.AddRow("UPLPURORA","PONUM",v.Global.sPO,"VENDNUM",v.Global.sVendor, "User2",v.Local.sOrder, "DUEDATE",V.Local.sDueDate, "DATEREQUIRED",V.Local.sDueDate, "POORDERDATE",V.Local.sOrderDate, "SHIPVIA",V.PASSED.000028, "FOBINFO",V.Passed.000027, "TERMS",V.Passed.000029)
+	
+f.Intrinsic.Control.Else
+	f.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.check_inter_co.End
+
+Program.Sub.unload.Start
+f.Intrinsic.Control.If(v.ODBC.coredb.state,=,1)
+	F.ODBC.Connection!coredb.close
+f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.If(v.ODBC.Con.state,=,1)
+	f.ODBC.Connection!Con.Close
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.End
+Program.Sub.unload.End
+
+Program.Sub.build_header_BandC.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+
+
+f.ODBC.Connection!coredb.executeandreturn("select NAME_COMPANY, ADDRESS1, ADDRESS2, CITY, STATE, CODE_ZIP from V_COMPANY",V.Local.sRet)
+f.Intrinsic.Control.If(v.Local.sRet.Length,>,0)
+	f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+	f.Data.DataTable.AddRow("UPLPURORBC","PONUM",v.Global.sPO,"RecType","B","VendName",v.Local.sRet(0),"VendAddr1",v.Local.sRet(1),"VendAddr2",v.Local.sRet(2),"VendCity",v.Local.sRet(3),"VendState",v.Local.sRet(4),"VendZip",v.Local.sRet(5))
+	f.Data.DataTable.AddRow("UPLPURORBC","PONUM",v.Global.sPO,"RecType","C","VendName",v.Passed.000008,"VendAddr1",v.Passed.000010, "VendAddr2",v.Passed.000012, "VendCity",v.Passed.000016,"VendState",v.Passed.000017,"VendZip",v.Passed.000018)
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.build_header_BandC.End
+
+Program.Sub.build_lines.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sOrder.Declare
+v.Local.iCount.Declare
+v.Local.sDate.Declare
+v.Local.sMap.Declare(String,"PONUM*!*RECTYPE*!*PARTNUM*!*PARTLOC*!*PARTDESC*!*POUM*!*DUEDATE*!*PURCHCOST*!*PURCHQTYORDERED*!*USER5")
+
+f.Intrinsic.String.LPad(v.Passed.000003,"0",7,v.Local.sOrder)
+'v.Local.sOrder.Set("0000515")
+
+F.Intrinsic.Control.For(V.Local.iCount,0,V.DataTable.SOLINES.RowCount--,1)
+	'format the date
+	F.Intrinsic.String.Format(V.DataTable.SOLINES(V.Local.iCount).DATE!FIELDVALSTRING,"MMDDYY",V.Local.sDate)
+	
+	F.Data.DataTable.AddRowByMap("UPLPURORL",V.Local.sMap,V.Global.sPO,V.DataTable.SOLINES(V.Local.iCount).LINE!FIELDVALTRIM,V.DataTable.SOLINES(V.Local.iCount).PART!FIELDVALTRIM,V.DataTable.SOLINES(V.Local.iCount).LOCATION!FIELDVALTRIM,V.DataTable.SOLINES(V.Local.iCount).DESCRIPTION!FIELDVALTRIM,V.DataTable.SOLINES(V.Local.iCount).UM_ORDER!FIELDVALTRIM,V.Local.sDate,V.DataTable.SOLINES(V.Local.iCount).PRICE!FIELDVALTRIM,V.DataTable.SOLINES(V.Local.iCount).QTY_ORDERED!FIELDVALTRIM,V.Local.sOrder)
+	'update the lines with the purchase order number so they don't get pulled in a second time
+	f.Intrinsic.String.Build("update order_lines set USER_5 = '{0}' WHERE ORDER_NO = '{1}' AND LEFT(RECORD_NO,3) = '{2}'", V.Global.sPO,V.Local.sOrder,V.DataTable.SOLINES(V.Local.iCount).LINE!FIELDVALTRIM,V.Local.sSql)
+	F.ODBC.Connection!COREDB.Execute(v.Local.sSql)	
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+F.Intrinsic.String.Build("UPDATE ORDER_HEADER SET CUSTOMER_PO = '{0}' WHERE ORDER_NO = '{1}' AND RECORD_NO = 'A'",V.Global.sPO,V.Local.sOrder,V.Local.sSql)
+F.ODBC.Connection!COREDB.Execute(v.local.sSql)
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+
+Program.Sub.build_lines.End
+
+Program.Sub.get_po_num.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.iPos.Declare
+v.Local.sSql.Declare
+
+f.Intrinsic.String.Build("GLOBAL_{0}",V.Global.sIntCoCode.Trim,v.Global.sAltDsn)
+
+'---### DB Connection ###---
+F.ODBC.Connection!Con.OpenConnection(v.Global.sAltDsn,V.Ambient.PUser,V.Ambient.PPass)
+'---### Get Last PO Number ###---
+F.ODBC.Connection!con.ExecuteAndReturn("Select Last_PO_Num From Last_PO Where Ass_Sys = 'PUR' And Ass_Sub_Sys = 'CTL';",V.Local.iPos)
+f.Intrinsic.String.LPad(v.Local.iPos.++,"0",7,v.Global.sPO)
+
+f.Intrinsic.String.Build("Update LAST_PO Set LAST_PO_NUM ='{0}' where ASS_SYS='PUR' and ASS_SUB_SYS='CTL' ",v.Global.sPO,V.Local.sSql)
+F.ODBC.Connection!Con.Execute(V.Local.sSql)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.get_po_num.End
+
+Program.Sub.export.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sFile.Declare
+V.Local.sDate.Declare
+
+f.Intrinsic.String.Format(v.Ambient.Date,"YYYYMMDD",V.Local.sDate)
+F.Intrinsic.String.Build("{0}\INTERPOS\{1}\SO{1}{2}",V.Caller.FilesDir,V.Global.sIntCoCode,V.Local.sDate,V.Local.sFile)
+
+'added callwrapper type 2 here so the library file doesn't try to run the upload. It creates the file, then exits back to the main sub.
+f.Intrinsic.Control.CallSub(UPLPUROR,"FILE",V.Local.sFile,"CallWrapperType",2)
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.export.End
+
+
+Program.Sub.save_inter_co.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.sDate.Declare
+v.Local.sTime.Declare
+V.Local.iCount.Declare
+v.Local.sLine.Declare
+V.Local.sOrder.Declare
+
+f.Intrinsic.String.Format(v.Ambient.Date,"YYYYMMDD",V.Local.sDate)
+F.Intrinsic.String.Format(V.Ambient.Time,"HhNnSsSs",v.Local.sTime)
+f.Intrinsic.String.LPad(v.Passed.000003,"0",7,v.Local.sOrder)
+
+f.Data.DataTable.CreateFromSQL("INTERCO","COREDB","SELECT TOP 0 ORGN_CMPNY, PO_NO, PO_LINE, ORDER_NO, ORDER_LINE, DEST_CMPNY, DEST_ORDER_NO, DEST_ORDER_LN,PART, FILL_PART, LOCN, CURR_CD, FILLER, DATE_LAST_CHG, TIME_LAST_CHG, LAST_CHG_BY, LAST_CHG_PGM FROM INTCMP_SO_EVNT",True)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.DataTable.UPLPURORL.RowCount--,1)
+	f.Intrinsic.String.RPad(v.DataTable.UPLPURORL(v.Local.iCount).RECTYPE!FIELDVALTRIM,"0",4,V.Local.sLine)
+	
+	f.Data.DataTable.AddRow("INTERCO","ORGN_CMPNY",V.Global.sIntCoCode, "PO_NO",V.Global.sPO, "PO_LINE",V.Local.sLine,"DEST_CMPNY",V.Caller.CompanyCode, "DEST_ORDER_NO",v.Local.sOrder, "DEST_ORDER_LN",v.Local.sLine, "PART",v.DataTable.UPLPURORL(v.Local.iCount).PARTNUM!FIELDVALSTRING, "LOCN",V.DataTable.UPLPURORL(V.Local.iCount).PARTLOC!FIELDVALSTRING,"CURR_CD",V.Passed.000086, "DATE_LAST_CHG",V.Local.sDate, "TIME_LAST_CHG",V.Local.sTime, "LAST_CHG_BY",V.Caller.User, "LAST_CHG_PGM","ARC5653")
+
+f.Intrinsic.Control.Next(v.Local.iCount)
+	
+f.Data.DataTable.SaveToDB("INTERCO","COREDB","INTCMP_SO_EVNT","ORGN_CMPNY*!*PO_NO*!*PO_LINE",1)
+
+	F.Data.DataTable.DeleteRow("UPLPURORA")
+	F.Data.DataTable.DeleteRow("UPLPURORBC")
+	F.Data.DataTable.DeleteRow("UPLPURORL")
+
+f.ODBC.Connection!coredb.Close
+f.ODBC.Connection!Con.Close
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.save_inter_co.End
