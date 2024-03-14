@@ -1,0 +1,166 @@
+Program.Sub.Preflight.Start
+
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.LOCAL.SERROR.DECLARE
+V.Local.sFile.Declare
+v.Local.bExists.Declare
+v.Local.sData.Declare
+v.Local.sMessage.Declare
+v.Local.iIPM.Declare
+V.Local.bRunning.Declare
+v.Global.sOrders.Declare
+
+'F.Intrinsic.UI.Sleep(5)
+
+'communication with the watchdog
+F.Intrinsic.Control.AddEventHandler("IPMDATAIN",ipmReceived)
+'get order numbers from existing files
+f.Intrinsic.Control.CallSub(read_files)
+'call the upload
+F.Global.General.CallWrapperSync(50,"ORDUPL")
+'print the orders
+f.Intrinsic.Control.CallSub(print_orders)
+
+
+'this will send a message back to the calling program - simply passing the PID.
+f.Intrinsic.Task.PIDRunning(v.Caller.PID,v.Local.bRunning)
+
+f.Intrinsic.Control.If(v.Local.bRunning)
+	f.Intrinsic.IPM.SendMessage(v.Ambient.PID,V.Caller.Switches)
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_5653_OU_ORDUPL.G2U",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+'f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.IPM.SendMessage(V.Local.sError,V.Caller.Switches)
+F.Intrinsic.Control.End
+Program.Sub.catching.End
+
+Program.Sub.ipmReceived.Start
+f.Intrinsic.Control.End
+Program.Sub.ipmReceived.End
+
+'Function.Global.BI.SaveReport(rpt id, mode,param name array,param value array,FQ filename)
+Program.Sub.read_files.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sFiles.Declare
+v.Local.sDir.Declare
+V.Local.iCount.Declare
+v.Local.sOrder.Declare
+v.Local.sParams.Declare
+v.Local.sPValues.Declare
+v.Local.sPNames.Declare
+v.Local.iRptID.Declare
+v.Local.sData.Declare
+v.Local.sPath.Declare
+v.Local.sOrders.Declare
+
+
+f.Intrinsic.String.Build("{0}\WEB_ORDERS\{1}\",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sDir)
+F.Intrinsic.File.GetFileList(V.Local.sDir,V.Local.sFiles)
+F.Intrinsic.String.Split(V.Local.sFiles,":",V.Local.sFiles)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sFiles.UBound,1)
+	f.Intrinsic.String.Build("{0}{1}",v.Local.sDir,v.Local.sFiles(v.Local.iCount),v.Local.sPath)
+	f.Intrinsic.File.File2String(V.Local.sPath,v.Local.sData)
+	f.Intrinsic.String.Mid(v.Local.sData,9,7,v.Local.sOrder)
+	f.Intrinsic.Control.If(v.Local.iCount,=,0)
+		v.Local.sOrders.Set(v.Local.sOrder)
+	f.Intrinsic.Control.Else
+		f.Intrinsic.String.Build("{0}*!*{1}",v.Local.sOrders,v.Local.sOrder,v.Local.sOrders)
+	f.Intrinsic.Control.EndIf
+	v.Local.sData.Set("")
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+v.Local.sPath.Set("")
+
+v.Global.sOrders.Set(v.Local.sOrders)
+	
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.read_files.End
+
+
+
+Program.Sub.print_orders.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sFiles.Declare
+v.Local.sDir.Declare
+V.Local.iCount.Declare
+v.Local.sOrder.Declare
+v.Local.sParams.Declare
+v.Local.sPValues.Declare
+v.Local.sPNames.Declare
+v.Local.iRptID.Declare
+v.Local.sData.Declare
+v.Local.sPath.Declare
+v.Local.sOrders.Declare
+
+
+f.Intrinsic.String.Split(v.Global.sOrders,"*!*",v.Local.sOrders)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sOrders.UBound,1)
+	v.Local.sOrder.Set(v.Local.sOrders(v.Local.iCount))
+	f.Intrinsic.String.Build("{0}\INTERACK\{1}.PDF",V.Caller.FilesDir,V.Local.sOrder,v.Local.sPath)
+	f.Intrinsic.String.Build("{0}!*!P!*! !*!",v.Local.sOrder,v.Local.sParams)
+	f.Global.General.CallWrapperSyncBIO(910050,v.Local.sParams)
+	
+	f.Intrinsic.Control.CallSub(getrptid,"ORDER",V.Local.sOrder)
+	
+	f.Global.BI.GetIDFromName("OE_ACKNOWLEDGEMENT_wBar.rpt",False,v.Local.iRptID)
+	
+	f.Intrinsic.String.Build("{0}*!*{1}*!**!*.2",v.Caller.Terminal,v.Args.RPTID,V.Local.sPValues)
+	f.Intrinsic.String.Split("Terminal*!*ReportID*!*IncludesTax*!*Dec","*!*",v.Local.sPNames)
+	F.Intrinsic.String.Split(V.Local.sPValues,"*!*",V.Local.sPValues)
+	F.Global.BI.SaveReport(v.Local.iRptID,1,v.Local.sPNames,v.Local.sPValues,v.Local.sPath)
+
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.print_orders.End
+
+Program.Sub.getrptid.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sReportID.Declare
+
+f.ODBC.Connection!coredb.opencompanyconnection
+f.Intrinsic.String.Build("SELECT DISTINCT RPTID FROM V_BI_ACKNWLDGMNT WHERE ORDER_NO = '{0}' AND TERMINAL = '{1}'",V.Args.ORDER,V.Caller.Terminal,V.Local.sSql)
+F.ODBC.Connection!coredb.ExecuteAndReturn(v.Local.sSql,v.Local.sReportID)
+f.odbc.connection!coredb.close
+
+F.Intrinsic.Variable.AddRV("RPTID",V.Local.sReportID)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.getrptid.End
+
+Program.Sub.Comments.Start
+${$0$}$GCG_4986_OU_ORDUPL$}$DLF$}$10/9/2017 10:31:10 AM$}$False
+Program.Sub.Comments.End
