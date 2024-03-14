@@ -1,0 +1,396 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Size(6765,4890)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form.GGCLines.Create(GsGridControl)
+Gui.Form.GGCLines.Size(6345,4245)
+Gui.Form.GGCLines.Position(105,30)
+Program.Sub.ScreenSU.End
+Program.Sub.Preflight.Start
+v.Global.sPO.Declare
+v.Global.sPack.Declare
+v.Global.sVendCo.Declare
+V.Global.sMobileUserName.Declare
+v.Global.sUserID.Declare
+
+F.Data.DataTable.Create("POST",True)
+f.Data.DataTable.AddColumn("POST","PO","STRING")
+F.Data.DataTable.AddColumn("POST","LINE","STRING")
+F.Data.DataTable.AddColumn("POST","PART","STRING")
+F.Data.DataTable.AddColumn("POST","DESCR","STRING")
+F.Data.DataTable.AddColumn("POST","QTY","STRING")
+Program.Sub.Preflight.End
+
+'po# - packlist number
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.sTrans.Declare
+V.Local.bVal.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+
+
+f.ODBC.Connection!coredb.opencompanyconnection
+'f.Global.Mobile.GetCustomLine(V.Passed.DATA-TRANSID,"coredb",V.Local.sTrans)
+'Function.Global.Mobile.GetCustomHeader
+f.Intrinsic.String.Build("select USER_ID from v_wireless_hdr where trans_id = '{0}'",V.Passed.DATA-TRANSID,v.Local.sSql)
+f.ODBC.Connection!coredb.ExecuteAndReturn(v.Local.sSql,v.Global.sUserID)
+
+f.Global.Mobile.GetCustomLine(V.Passed.DATA-TRANSID,"coredb",V.Local.sTrans)
+
+F.Intrinsic.String.Split(V.Local.sTrans,"*!*",V.Local.sTrans)
+
+f.Intrinsic.String.IsInString(v.Local.sTrans(1),"-",False,v.Local.bVal)
+f.Intrinsic.Control.If(v.Local.bVal)
+	f.Intrinsic.String.Split(v.Local.sTrans(1),"-",v.Local.sTrans)
+	f.Intrinsic.String.LPad(v.Local.sTrans(0),"0",7,v.Global.sPO)
+	f.Intrinsic.String.LPad(v.Local.sTrans(1),"0",7,v.Global.sPack)
+	
+	f.Intrinsic.Control.CallSub(validate_vendor)
+	
+f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","gcg_5653_mobile_rcpt.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+F.Intrinsic.Control.CallSub(unload)
+Program.Sub.Catching.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.If(v.ODBC.coredb.state,=,1)
+	f.ODBC.Connection!coredb.Close
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.End
+Program.Sub.Unload.End
+
+Program.Sub.validate_vendor.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+
+
+'get the vendor ID
+f.Intrinsic.String.Build("select vendor from v_po_header where purchase_order = '{0}' and FLAG_RECV_CLOSED <> 'Y'",v.Global.sPO,v.Local.sSql)
+f.ODBC.Connection!coredb.executeandreturn(V.Local.sSql,V.Local.SRET)
+
+f.Intrinsic.Control.If(v.Local.sRet.Length,<,1)
+	F.Intrinsic.String.Replace(V.Local.sSql,"<> 'Y'","= 'Y'",V.Local.sSql)
+	f.ODBC.Connection!coredb.executeandreturn(V.Local.sSql,V.Local.SRET)
+	F.Intrinsic.Control.If(V.Local.sRet.Length,>,0)
+		F.Global.Mobile.SetCustomResult("Purchase Order is Closed")
+	F.Intrinsic.Control.Else
+		F.Global.Mobile.SetCustomResult("Purchase Order Not Found")
+	F.Intrinsic.Control.EndIf
+f.Intrinsic.Control.EndIf
+'check the intercompany table to see if this vendor is a partner company, and get their company code
+f.Intrinsic.String.Build("select DEST_CMPNY from V_INTERCMPNY_XREF where ORGN_CMPNY = '{0}' and ORGN_VENDOR = '{1}'",v.Caller.CompanyCode,v.Local.sRet.Trim,V.Local.sSql)
+F.ODBC.Connection!COREDB.EXECUTEANDRETURN(v.Local.sSql,v.Local.sret)
+
+F.Intrinsic.Control.If(V.Local.sRet.Length,>,0)
+	'set the vendor company code
+	V.Global.sVendCo.Set(V.Local.sRet)
+f.Intrinsic.Control.Else
+	f.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.CallSub(find_shipment)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.validate_vendor.End
+
+
+Program.Sub.find_shipment.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sDSN.Declare
+v.Local.sRet.Declare
+v.Local.bRows.Declare
+
+
+'open a connection to the shippers company code
+f.Intrinsic.String.Build("Global_{0}",v.Global.sVendCo,v.Local.sDSN)
+f.ODBC.Connection!vendor.openconnection(v.Local.sDSN,v.Ambient.PUser,v.Ambient.PPass)
+'see if this has been invoiced at the shippers company
+f.Intrinsic.String.Build("select ORDER_REC, PART, LOCATION, QTY_SHIPPED, PRICE, INVOICE FROM V_SHIPMENT_LINES WHERE PCK_NO = '{0}' AND LN_SHP_STAT = '1' AND INVOICE != ''",V.Global.sPack,V.Local.sSql)
+f.ODBC.Connection!vendor.ExecuteAndReturn(v.Local.sSql,v.Local.sRet)
+
+f.Intrinsic.Control.If(v.Local.sRet.Length,>,0)
+	f.ODBC.Connection!vendor.close
+	'the order has been shipped and invoice - go ahead and receive the PO
+	f.Intrinsic.Control.CallSub(build_records,"LINES",V.Local.sRet,"STATUS","INV")
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.String.Replace(v.Local.sSql,"!=","=",v.Local.sSql)
+f.ODBC.Connection!vendor.ExecuteAndReturn(v.Local.sSql,v.Local.sRet)
+
+f.Intrinsic.Control.If(v.Local.sRet.Length,>,0)
+	f.ODBC.Connection!vendor.close
+	'The order hasn't been invoiced, but it has been shipped - go ahead and receive it
+	f.Intrinsic.Control.CallSub(build_records,"LINES",V.Local.sRet,"STATUS","SHIP")
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.String.Replace(v.Local.sSql,"= '1'","= '0'",v.Local.sSql)
+f.ODBC.Connection!vendor.ExecuteAndReturn(v.Local.sSql,v.Local.sRet)
+
+f.Intrinsic.Control.If(v.Local.sRet.Length,>,0)
+	f.ODBC.Connection!vendor.close
+	'The order has not been shipped - do not receive it - notify "SHIPPERS" group at shipping company
+	F.Intrinsic.String.Build("<br>The shipment <font color='red'><b><u>{0}</u></b></font> has not been completed. Purchase Order <font color='red'><b><u>{1}</u></b></font> can not be received. The shipper at <font color='red'><b><u>{2}</u></b></font> has been notified.",v.Global.sPack,v.Global.sPO,v.Global.sVendCo,v.Local.sRet)
+	f.Global.Mobile.SetCustomResult(v.Caller.CompanyCode,v.Passed.DATA-TRANSID,V.Local.sRet)
+	f.Intrinsic.Control.CallSub(sendEmail,"STATUS","NO")
+f.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.find_shipment.End
+
+
+Program.Sub.build_records.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.bRows.Declare
+V.Local.iCount.Declare
+V.Local.iRec.Declare
+v.local.iTrans.Declare
+v.Local.sTrans.Declare
+v.Local.sLines.Declare
+v.Local.sRow.Declare
+V.Local.sBin.Declare
+v.Local.sSql.Declare
+v.Local.sQty.Declare
+V.Local.sPQty.Declare
+V.Local.sHeader.Declare
+v.Local.sReceiver.Declare
+V.Local.sPrint.Declare(String,"N")
+v.Local.sCopies.Declare(String,"0")
+v.Local.sMap0.Declare(String,"TRANS_ID*!*SEQ*!*TRANS_TYPE*!*FIELD_1*!*FIELD_2*!*FIELD_3*!*FIELD_7*!*FIELD_8*!*FIELD_9*!*FIELD_10*!*FIELD_11*!*FIELD_18*!*FIELD_21*!*FIELD_22*!*FIELD_23*!*FIELD_24*!*PRINTED*!*DATE_LAST_CHG*!*TIME_LAST_CHG")
+'0000,P10,PO,LINE,BIN,MMDDYY,Qx10000,RECEIVER,COST,PRINT Y/N,#OFLABELS,"N",Qx1000,IUM,PUM,DATE,TIME,BY
+v.Local.sMap1.Declare(String,"TRANS_ID*!*SEQ*!*TRANS_TYPE*!*DATE_LAST_CHG*!*TIME_LAST_CHG*!*LAST_CHG_BY")
+'0001,P10,DATE,TIME,BY
+V.Local.sMapHead.Declare(String,"TRANS_ID*!*TRANS_TYPE*!*ATTEMPTED_DATE*!*ATTEMPTED_TIME*!*DEFAULT_PRINTER*!*LABEL_PRINTER*!*USER_ID*!*USE_LABEL_PRINTER*!*DATE_LAST_CHG*!*TIME_LAST_CHG*!*LAST_CHG_BY")
+
+
+
+f.Intrinsic.String.Build("select DEFAULT_PRINTER, LABEL_PRINTER, USER_ID from v_wireless_hdr where trans_id = '{0}'",v.Passed.DATA-TRANSID,v.Local.sSql)
+f.ODBC.Connection!coredb.ExecuteAndReturn(v.Local.sSql,v.Local.sHeader)
+f.Intrinsic.String.Split(v.Local.sHeader,"*!*",v.Local.sHeader)
+
+
+'AP_VOUCH WHERE VOUCH_KEY = R
+'OP_HEADER 40030,0000 F_LONG
+'OP_HEADER 400300,0001 ASCII_FLAG
+f.Data.DataTable.CreateFromSQL("LINES","COREDB","SELECT TOP 0 * FROM WIRELESS_LINE",True)
+f.Data.DataTable.CreateFromSQL("HEAD","COREDB","SELECT TOP 0 * FROM WIRELESS_HDR",True)
+
+f.Intrinsic.String.IsInString(v.Args.LINES,"#$#",False,v.Local.bRows)
+	f.Intrinsic.Control.If(v.Local.bRows)
+		F.Intrinsic.String.Split(V.Args.LINES,"#$#",V.Local.sLines)
+		f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sLines.UBound,1)
+			
+			f.Intrinsic.String.Split(v.Local.sLines(v.Local.iCount),"*!*",v.Local.sRow)
+			'get default bin, purch um, inv um
+			f.Intrinsic.String.Build("select BIN, UM_PURCHASING, UM_INVENTORY, DESCRIPTION from v_inventory_mstr where part = '{0}' and location = '{1}'",v.Local.sRow(1),v.Local.sRow(2),v.Local.sSql)
+			f.ODBC.Connection!coredb.ExecuteAndReturn(v.Local.sSql,v.Local.sBin)
+			F.Intrinsic.String.Split(V.Local.sBin,"*!*",V.Local.sBin)
+			'adjust the quantity for a mobile receipt
+			F.Intrinsic.Math.Mult(V.Local.sRow(3),10000,V.Local.sQty)
+			f.Intrinsic.Math.Mult(v.Local.sRow(3),1000,v.Local.sPQty)
+			'get the next receiver number
+			f.Global.General.ReadOption(400300,3,0,"0000",V.Local.iRec)
+			F.Intrinsic.Math.Add(V.Local.iRec,1,V.Local.iRec)
+			F.Global.General.SaveOption(400300,"0000",False,, "","","",,v.Local.iRec)
+			F.Global.General.ReadOption(400300,1,"A","0001",V.Local.sTrans)
+			F.Intrinsic.String.Build("{0}{1}",V.Local.iRec,V.Local.sTrans,V.Local.sTrans)
+			F.Intrinsic.String.LPad(V.Local.sTrans,"0",6,V.Local.sReceiver)
+			'next transaction ID
+
+			F.Intrinsic.Control.If(V.Local.iCount,=,0)
+				F.ODBC.Connection!coredb.GetID("WIRELESS_LINE","TRANS_ID",True,v.Local.iTrans)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.Math.Add(V.Local.iTrans,1,v.Local.iTrans)
+			f.Intrinsic.Control.EndIf
+			f.Intrinsic.String.LPad(v.Local.iTrans,"0",9,v.Local.sTrans)
+			F.Data.DataTable.AddRowByMap("LINES",v.Local.sMap0,V.Local.sTrans,"0000","P10",V.Global.sPO,v.Local.sRow(0).LEFT3,V.Local.sBin(0),V.Ambient.Date.FormatMMDDYY,v.Local.sQty,v.Local.sReceiver,V.Local.sRow(4),"N","0","N",v.Local.sPQty,V.Local.sBin(2),V.Local.sBin(1),"Y",V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHhNnSsSs)
+			F.Data.DataTable.AddRowByMap("LINES",V.Local.sMap1,V.Local.sTrans,"0001","P10",V.Ambient.Date.FormatYYYYMMDD,v.Ambient.Time.FormatHhNnSsSs,"MOBILE")
+			
+			F.Data.DataTable.AddRowByMap("HEAD",v.Local.sMapHead,v.Local.sTrans,"P10","00000000","00000000",V.Local.sHeader(0),V.Local.sHeader(1),V.Global.sUserID,0,V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHhNnSsSs,"MOBILE")
+			
+			F.Data.DataTable.SaveToDB("LINES","COREDB","WIRELESS_LINE","TRANS_ID*!*SEQ",1)
+			
+			F.Data.DataTable.AddRow("POST","PO",v.Global.sPO,"LINE",v.Local.sRow(0).LEFT3,"PART",v.Local.sRow(1),"DESCR",v.Local.sBin(3),"QTY",V.Local.sRow(3))
+			
+			F.Data.DataTable.DeleteRow("LINES")
+		f.Intrinsic.Control.Next(v.Local.iCount)
+	f.Intrinsic.Control.Else
+			f.Intrinsic.String.Split(v.Local.sLines(v.Local.iCount),"*!*",v.Local.sRow)
+			'get default bin, purch um, inv um
+			f.Intrinsic.String.Build("select BIN,UM_PURCHASING,UM_INVENTORY from v_inventory_mstr where part = '{0}' and location = '{1}'",v.Local.sRow(1),v.Local.sRow(2),v.Local.sSql)
+			f.ODBC.Connection!coredb.ExecuteAndReturn(v.Local.sSql,v.Local.sBin)
+			F.Intrinsic.String.Split(V.Local.sBin,"*!*",V.Local.sBin)
+			'adjust the quantity for a mobile receipt
+			F.Intrinsic.Math.Mult(V.Local.sRow(3),10000,V.Local.sQty)
+			f.Intrinsic.Math.Mult(v.Local.sRow(3),1000,v.Local.sPQty)
+			'get the next receiver number
+			f.Global.General.ReadOption(400300,3,0,"0000",V.Local.iTrans)
+			F.Intrinsic.Math.Add(V.Local.iTrans,1,V.Local.iTrans)
+			F.Global.General.SaveOption(400300,"0000",False,, "","","",,v.Local.iTrans)
+			F.Global.General.ReadOption(400300,1,"A","0001",V.Local.sTrans)
+			F.Intrinsic.String.Build("{0}{1}",V.Local.iTrans,V.Local.sTrans,V.Local.sTrans)
+			F.Intrinsic.String.LPad(V.Local.sTrans,"0",6,V.Local.sReceiver)
+			'next transaction ID
+			F.ODBC.Connection!coredb.GetID("WIRELESS_HDR","TRANS_ID",True,v.Local.iTrans)
+			f.Intrinsic.String.LPad(v.Local.iTrans,"0",9,v.Local.sTrans)
+			F.Data.DataTable.AddRowByMap("LINES",v.Local.sMap0,V.Local.sTrans,"0000","P10",V.Global.sPO,v.Local.sRow(0).LEFT3,V.Local.sBin(0),V.Ambient.Date.FormatMMDDYY,v.Local.sQty,v.Local.sReceiver,V.Local.sRow(4),"N","0","N",v.Local.sPQty,V.Local.sBin(2),V.Local.sBin(1),"Y",V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHhNnSsSs)
+			'F.Data.DataTable.AddRowByMap("LINES",V.Local.sMap1,V.Local.sTrans,"0001","P10",V.Ambient.Date.FormatYYYYMMDD,v.Ambient.Time.FormatHhNnSsSs,"MOBILE")
+			
+			F.Data.DataTable.AddRowByMap("HEAD",v.Local.sMapHead,v.Local.sTrans,"P10","00000000","00000000",V.Local.sHeader(0),V.Local.sHeader(1),V.Global.sUserID,0,V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHhNnSsSs,"MOBILE")
+			
+			F.Data.DataTable.SaveToDB("LINES","COREDB","WIRELESS_LINE","TRANS_ID*!*SEQ",1)
+			
+			F.Data.DataTable.AddRow("POST","PO",v.Global.sPO,"LINE",v.Local.sRow(0).LEFT3,"PART",v.Local.sRow(1),"DESCR",v.Local.sBin(3),"QTY",V.Local.sRow(3))
+		
+	f.Intrinsic.Control.EndIf
+	
+f.Data.DataTable.SaveToDB("HEAD","COREDB","WIRELESS_HDR","TRANS_ID")
+
+f.Intrinsic.Control.CallSub(postBack)
+
+F.Intrinsic.Control.CallSub(SendEmail,"STATUS",V.Args.STATUS)
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.build_records.End
+
+Program.Sub.postBack.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sFile.Declare
+v.Local.sReturn.Declare
+
+f.Data.DataView.Create("POST","vPOST",22)
+GUI.Form.GGCLines.DataSource("POST")
+GUI.Form.GGCLines.AddGridviewFromDataview("gvPOST","POST","vPOST")
+
+GUI.Form.GGCLines.SetColumnProperty("gvPOST","PO","CAPTION","PO#")
+GUI.Form.GGCLines.SetColumnProperty("gvPOST","LINE","CAPTION","LINE")
+GUI.Form.GGCLines.SetColumnProperty("gvPOST","PART","CAPTION","PART")
+GUI.Form.GGCLines.SetColumnProperty("gvPOST","DESCR","CAPTION","DESCR")
+GUI.Form.GGCLines.SetColumnProperty("gvPOST","QTY","CAPTION","QTY")
+
+GUI.Form.GGCLines.SetColumnProperty("gvPOST","PO","MinWidth","10")
+gui.Form.GGCLines.SetColumnProperty("gvPOST","LINE","MinWidth","5")
+gui.Form.GGCLines.SetColumnProperty("gvPOST","PART","MinWidth","25")
+gui.Form.GGCLines.SetColumnProperty("gvPOST","DESCR","MinWidth","35")
+gui.Form.GGCLines.SetColumnProperty("gvPOST","QTY","MinWidth","10")
+
+gui.Form..Show
+gui.Form..Visible(False)
+
+f.Intrinsic.String.Build("{0}\{1}mobile.txt",v.Caller.FilesDir,v.Global.sUserID,v.Local.sFile)
+gui.Form.GGCLines.Export(v.Local.sFile,"html")
+
+'convert the html file to a string so we can save the grid as a custom mobile return
+f.Intrinsic.File.File2String(v.Local.sFile,v.Local.sReturn)
+F.Intrinsic.File.DeleteFile(V.Local.sFile)
+f.Global.Mobile.SetCustomResult(V.Caller.CompanyCode,v.Passed.DATA-TRANSID,V.Local.sReturn)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.postBack.End
+
+Program.Sub.SendEmail.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sMsg.Declare
+V.Local.sEmail.Declare
+v.Local.sName.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+V.Local.iCount.Declare
+v.Local.iId.Declare
+v.Local.sFullName.Declare
+v.Local.sRecipient.Declare
+
+
+f.Global.Security.GetGroupMembers("SHIPPERS",V.Global.sVendCo,V.Local.sName)
+f.Global.Security.GetGroupEmails("SHIPPERS",V.Global.sVendCo,v.Local.sEmail)
+
+F.Intrinsic.String.Build("SELECT NAME FROM MOBILE_USER_INFO WHERE USERID = '{0}'",v.Global.sUserID,v.Local.sSql)
+f.ODBC.Connection!comm.opencommonconnection
+f.ODBC.Connection!comm.ExecuteAndReturn(v.Local.sSql,v.Local.sRet)
+v.Global.sMobileUserName.Set(v.Local.sRet.Trim)
+f.ODBC.Connection!comm.Close
+
+F.Intrinsic.String.Split(V.Local.sName,"*!*",V.Local.sName)
+F.Intrinsic.String.Split(V.Local.sEmail,"*!*",V.Local.sEmail)
+F.Intrinsic.Control.For(V.Local.iCount,0,v.Local.sName.UBound,1)
+	f.Global.Security.GetFullName(v.Local.sName(v.Local.iCount),v.Local.sFullName)
+	f.Intrinsic.Control.If(v.Local.iCount,=,0)
+		f.Intrinsic.String.Build("{0}*!*{1}",v.Local.sFullName,v.Local.sEmail(v.Local.iCount),v.Local.sRecipient)
+	f.Intrinsic.Control.Else
+		f.Intrinsic.String.Build("{0}@!@{1}*!*{2}",v.Local.sRecipient,v.Local.sFullName,v.Local.sEmail(v.Local.iCount),v.Local.sRecipient)
+	f.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCount)
+
+f.Intrinsic.Control.SelectCase(v.Args.STATUS)
+	F.Intrinsic.Control.Case("NO")
+		'the packlist hasn't been shipped yet.  Notify the users in the "shippers" group for the company that shipped it.
+		f.Intrinsic.String.Build("Mobile user {0} is trying to receive their purchase order {1} in company code {2}.  This relates to your shipment {3} that has not been completed yet.  Please complete the shipment and notify {0}",v.Global.sMobileUserName,v.Global.sPO,v.Caller.CompanyCode,v.Global.sPack,v.Local.sMsg)
+
+		F.Global.Messaging.QueueMessage(V.Caller.CompanyCode,0,"MOBILE","Mobile Receipt Requested","sspade@hallindustries.com*!*Sam Spade",v.Local.sRecipient,v.Local.sMsg)
+		f.Intrinsic.Control.CallSub(unload)
+	
+	F.Intrinsic.Control.Case("INV")
+		'the packlist has already been shipped and invoiced
+		F.Intrinsic.String.Build("PO {0} Received at {1} by {2}. {3}Already been shipped and invoiced",v.Global.sPO,v.Caller.CompanyCode,v.Global.sUserID,v.Ambient.NewLine,v.Local.sMsg)
+		
+		f.Global.Messaging.QueueMessage(v.Caller.CompanyCode,0,"MOBILE","Mobile PO Received","sspade@hallindustries.com*!*Sam Spade",v.Local.sRecipient,v.Local.sMsg)
+		f.Intrinsic.Control.CallSub(unload)
+		
+	F.Intrinsic.Control.Case("SHIP")
+		'the packlist has been shipped, but not invoiced
+		f.Intrinsic.String.Build("PO {0} Received at {1} by {2}. {3}Shipped but still needs to be invoiced",v.Global.sPO,v.Caller.CompanyCode,v.Global.sUserID,v.Ambient.NewLine,v.Local.sMsg)
+		
+		f.Global.Messaging.QueueMessage(v.Caller.CompanyCode,0,"MOBILE","Mobile PO Received","sspade@hallindustries.com*!*Sam Spade",v.Local.sRecipient,v.Local.sMsg)
+		f.Intrinsic.Control.CallSub(unload)
+f.Intrinsic.Control.EndSelect
+
+f.Intrinsic.Control.CallSub(unload)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.SendEmail.End
+
