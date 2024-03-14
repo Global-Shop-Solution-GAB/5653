@@ -1,0 +1,454 @@
+Program.Sub.Preflight.Start
+v.Global.sVendor.Declare
+v.Global.sPO.Declare
+v.Global.sOrder.Declare
+V.Global.sIntCoCode.Declare
+Program.External.Include.Library("GCG_5653_ORDUPL.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sDir.Declare
+v.Local.bExists.Declare
+v.Local.bRunning.Declare
+
+'f.Intrinsic.Control.If(v.Caller.CompanyCode,=,"JFK")
+'	Function.Intrinsic.Debug.InvokeDebugger
+'	Function.Intrinsic.Debug.Stop
+'f.Intrinsic.Control.EndIf
+
+'communication with the watchdog
+F.Intrinsic.Control.AddEventHandler("IPMDATAIN",ipmReceived)
+
+f.Intrinsic.String.Build("{0}\INTERPOS\{1}\UPLOADED",V.Caller.FilesDir,V.Caller.CompanyCode,V.Local.sDir)
+f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExists)
+f.Intrinsic.Control.If(v.Local.bExists,=,False)
+	f.Intrinsic.File.CreateDir(v.Local.sDir)
+f.Intrinsic.Control.EndIf
+'remove the sub directory
+f.Intrinsic.String.Replace(v.Local.sDir,"UPLOADED","",V.Local.sDir)
+f.Intrinsic.Control.CallSub(get_files,"PATH",V.Local.sDir)
+
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Catching.Start
+v.Local.sError.declare(string)
+F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}","GCG_5653_POUPLOAD.g2u",V.Ambient.NewLine,v.Args.sub,V.Args.errorno,V.args.errordesc,V.Local.sError)
+'f.Intrinsic.UI.Msgbox(v.Local.sError)
+F.Intrinsic.IPM.SendMessage(V.Local.sError,V.Caller.Switches)
+F.Intrinsic.Control.CallSub(unload)
+Program.Sub.Catching.End
+
+Program.Sub.unload.Start
+v.Local.bRunning.Declare
+
+'this will send a message back to the calling program - simply passing the PID.
+f.Intrinsic.Task.PIDRunning(v.Caller.PID,v.Local.bRunning)
+
+f.Intrinsic.Control.If(v.Local.bRunning)
+	f.Intrinsic.IPM.SendMessage(v.Ambient.PID,V.Caller.Switches)
+f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.End
+Program.Sub.unload.End
+
+Program.Sub.get_files.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sFileList.Declare
+v.Local.sFileName.Declare
+v.Local.sFile.Declare
+v.Local.sPurchaseOrder.Declare
+v.Local.sParts.Declare
+v.Local.iCount.Declare
+v.Local.bParts.Declare
+v.Local.sData.Declare
+V.Local.sPortion.Declare
+v.Local.bSalesOrder.Declare
+V.Local.sDest.Declare
+v.Local.bLocked.Declare
+
+'get the file list and split to array
+f.Intrinsic.File.GetFileList(v.Args.PATH,V.Local.sFileList)
+F.Intrinsic.Control.If(V.Local.sFileList.IsNullOrWhiteSpace)
+	'no files, exit
+	f.Intrinsic.Control.CallSub(Unload)
+f.Intrinsic.Control.Else
+	f.Intrinsic.String.Split(v.Local.sFileList,":",v.Local.sFileName)
+F.Intrinsic.Control.EndIf
+
+f.ODBC.Connection!coredb.opencompanyconnection
+
+'loop the array and validate file contents
+f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sFileName.UBound,1)
+	'check the file name.  If it starts with SO, then the sales order already exists in the other company, so skip that subroutine.
+	f.Intrinsic.Control.If(v.Local.sFileName(v.Local.iCount).left2,=,"SO")
+		V.Local.bSalesOrder.Set(False)
+	f.Intrinsic.Control.Else
+		v.Local.bSalesOrder.Set(True)
+	f.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.String.Build("{0}UPLOADED\{1}",V.Args.Path,V.Local.sFileName(V.Local.iCount),V.Local.sDest)
+	f.Intrinsic.String.Build("{0}{1}",v.Args.PATH,V.Local.sFileName(V.Local.iCount),V.Local.sFile)
+	f.Intrinsic.File.IsFileLocked(v.Local.sFile,v.Local.bLocked)
+	f.Intrinsic.Control.If(v.Local.bLocked)
+		f.Intrinsic.Control.DoUntil(v.Local.bLocked,=,False)
+			f.Intrinsic.UI.Sleep(5)
+			f.Intrinsic.File.IsFileLocked(v.Local.sFile,v.Local.bLocked)
+		f.Intrinsic.Control.Loop
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.File.CopyFile(v.Local.sFile,v.Local.sDest)
+	'load the file to a string
+	f.Intrinsic.File.File2String(V.Local.sFile,V.Local.sData)
+	F.Intrinsic.File.DeleteFile(V.Local.sFile)
+	'need to get the vendorID from the data for use later in the program
+	f.Intrinsic.String.Mid(v.Local.sData,268,6,v.Global.sVendor)
+	F.Intrinsic.String.Left(V.Local.sData,7,V.Global.sPO)
+	'if there is a hyphen in the file name, this means we have parts to add before we write the po
+	f.Intrinsic.String.IsInString(v.Local.sFileName(v.Local.iCount),"-",False,v.Local.bParts)
+	
+	f.Intrinsic.Control.If(v.Local.bParts)
+		f.Intrinsic.String.Split(v.Local.sData,"@@@",v.Local.sPortion)
+		V.Local.sPurchaseOrder.Set(v.Local.sPortion(0))
+		v.Local.sParts.Set(v.Local.sPortion(1))
+		f.Intrinsic.Control.CallSub(createparts,"PARTS",v.Local.sParts)
+		'F.Intrinsic.UI.Msgbox("PARTS CREATED")
+		F.Intrinsic.Control.CallSub(writepo,"PODATA",V.Local.sPurchaseOrder)
+		
+		'F.Intrinsic.UI.Msgbox("POUPLOADED")
+		f.Intrinsic.Control.If(v.Local.bSalesOrder)
+			F.Intrinsic.Control.CallSub(build_so_export,"SODATA",V.Local.sPurchaseOrder)
+		
+			'F.Intrinsic.UI.Msgbox("SALES ORDER DATA CREATED FROM PO DATA")
+			F.Intrinsic.Control.CallSub(ORDUPLCreateFile,"CCC",V.Args.CCC)
+			
+			'write the interco event record because it doesn't exist yet
+			f.Intrinsic.Control.CallSub(save_inter_co,"CCC",V.Args.CCC)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.Else
+		f.Intrinsic.Control.CallSub(writepo,"PODATA",V.Local.sData)
+		f.Intrinsic.Control.If(v.Local.bSalesOrder)
+			F.Intrinsic.Control.CallSub(build_so_export,"SODATA",V.Local.sData)
+			F.Intrinsic.Control.CallSub(ORDUPLCreateFile,"CCC",V.Args.CCC)
+			f.Intrinsic.Control.CallSub(save_inter_co)
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+F.ODBC.Connection!coredb.Close
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.get_files.End
+
+Program.Sub.createparts.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sLines.Declare
+v.Local.sPart.Declare
+V.Local.iCount.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+
+
+f.Intrinsic.String.Split(v.Args.PARTS,V.Ambient.NewLine,V.Local.sLines)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sLines.UBound,1)
+	F.Intrinsic.Control.If(V.Local.sLines(V.Local.iCount).LENGTH,>,0)
+		f.Intrinsic.String.Split(v.Local.sLines(v.Local.iCount),"*!*",v.Local.sPart)
+		f.Intrinsic.String.Build("select part from v_inventory_mstr where part = '{0}'",v.Local.sPart(0),v.Local.sSql)
+		f.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.sRet)
+		f.Intrinsic.Control.If(v.Local.sRet.IsNullOrWhiteSpace)
+			f.Global.Inventory.CreatePart(v.Local.sPart(0),v.Local.sPart(1),v.Local.sPart(2),v.Local.sPart(3),v.Local.sPart(4),v.Local.sPart(5),v.Local.sPart(6),v.Local.sPart(7),v.Local.sPart(8))
+		f.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.createparts.End
+
+Program.Sub.writepo.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.bExists.Declare
+v.Local.sFile.Declare
+V.Local.sFileName.Declare
+V.Local.sPOData.Declare
+v.Local.iPO.Declare
+v.Local.sStatus.Declare
+V.Local.sReturnFileName.Declare
+v.Local.sSql.Declare(String,"select top 1 COCODE from GCG_5653_UPL_PROCESS where program = 'UPLPUROR' ORDER BY TASKID ASC")
+v.Local.iProc.Declare
+v.Local.sRet.Declare
+v.Local.sTime.Declare
+
+v.Local.sPOData.Set(v.Args.PODATA)
+
+'UPLPUROR handling the multi-company use of PURORDER.TXT through process registration and deletion.
+f.ODBC.Connection!comn.opencommonconnection
+
+F.ODBC.Connection!comn.GETID("GCG_5653_UPL_PROCESS","TASKID",True,v.Local.iProc)
+F.ODBC.Connection!comn.openlocalrecordsetRW("interco","select * from GCG_5653_UPL_PROCESS")
+	f.ODBC.comn!interco.AddNew
+		f.ODBC.comn!interco.Set!TASKID(V.Local.iProc)
+		F.ODBC.comn!interco.Set!COCODE(V.Caller.CompanyCode)
+		F.ODBC.comn!interco.Set!PROGRAM("UPLPUROR")
+		F.ODBC.comn!interco.Set!DESCRIPTION("PURCHASE ORDER UPLOAD")
+		F.ODBC.comn!interco.Set!USERID("GCG_5653")
+		F.ODBC.comn!interco.Update
+	f.ODBC.comn!interco.Close
+
+f.Intrinsic.String.StripCharacters(v.Ambient.Time,v.Local.sTime)
+'filename for upload
+F.Intrinsic.String.Build("{0}{1}ORDER",V.Caller.CompanyCode,v.Local.sTime,V.Local.sFileName)
+
+f.Intrinsic.String.Build("{0}\{1}.TXT",V.Caller.FilesDir,V.Local.sFileName,V.Local.sFile)
+F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)	
+	'several company codes running this import, if the file PURORDER already exists, then another company is running the process.
+	'sSql is assuming that the "TASKID" is assigned as the process is registered.  Therefore this should serve each company in the order in which they requested the process.
+	f.Intrinsic.Control.DoUntil(v.Local.sRet.Trim,=,v.Caller.CompanyCode.Trim)
+		f.ODBC.Connection!comn.executeandreturn(v.Local.sSql,v.Local.sRet)
+		
+	f.Intrinsic.Control.Loop
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sPOData)
+	
+f.Intrinsic.Control.Else
+	f.Intrinsic.File.String2File(v.Local.sFile,v.Local.sPOData)
+F.Intrinsic.Control.EndIf
+
+
+
+F.Global.Callwrapper.New("POUpload","Purchasing.PurchaseOrderUpload")
+F.Global.Callwrapper.SetProperty("POUpload","Mode",0)
+F.Global.Callwrapper.SetProperty("POUpload","FileName",V.Local.sFileName)
+F.Global.CallWrapper.Run("POUpload")
+F.Global.CallWrapper.GetProperty("POUpload","Status",V.Local.sStatus)
+F.Global.CallWrapper.GetProperty("POUpload","ReturnFileName",V.Local.sReturnFileName)
+
+
+F.Intrinsic.File.DeleteFile(v.Local.sFile)
+
+F.Intrinsic.String.Build("DELETE FROM GCG_5653_UPL_PROCESS WHERE TASKID = {0}",V.Local.iProc,V.Local.sSql)
+
+F.ODBC.Connection!comn.execute(v.Local.sSql)
+
+f.ODBC.Connection!comn.Close
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.writepo.End
+
+Program.Sub.build_so_export.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+v.Local.sSql.Declare
+v.Local.sRet.Declare
+v.Local.sDNS.Declare
+v.Local.sLine.Declare
+v.Local.sCust.Declare
+v.Local.sCoCode.Declare
+V.Local.iRow.Declare(Long,0)
+v.Local.sLines.Declare
+v.Local.iCount.Declare
+v.Local.sType.Declare
+v.Local.dOrderDate.Declare
+v.Local.dOrderDue.Declare
+v.Local.sOrderDate.Declare
+v.Local.sDueDate.Declare
+V.Local.sTemp.Declare
+v.Local.bCheck.Declare
+v.Local.sVendPO.Declare
+
+
+'additionally to creating the sales order export, we have to create the intercompany event record.
+'get the customer number from intercompany
+f.Intrinsic.String.Build("select DEST_CMPNY, DEST_CUST_NO from V_INTERCMPNY_XREF where ORGN_CMPNY = '{0}' AND ORGN_VENDOR = '{1}'",V.Caller.CompanyCode,V.Global.sVendor,v.Local.sSql)
+
+f.ODBC.Connection!coredb.executeandreturn(v.Local.sSql,v.Local.sret)
+
+F.Intrinsic.Control.If(V.Local.sRet.Length,>,0)
+	f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+	v.Local.sCoCode.Set(v.Local.sRet(0))
+	v.Local.sCust.Set(v.Local.sRet(1))
+	f.Data.DataTable.AddRow("ORDUPL","CUSTOMERNO",V.Local.sCust)
+
+
+	'connect to the other database and get the customer info we need
+	f.Intrinsic.String.Build("GLOBAL_{0}",v.Local.sCoCode,V.Local.sDNS)
+	f.ODBC.Connection!dest.openconnection(v.Local.sDNS,v.Ambient.PUser,v.Ambient.PPass)
+	
+
+	f.Intrinsic.String.Build("SELECT NAME_CUSTOMER, ADDRESS1, ADDRESS2, CITY, STATE, ZIP, ATTENTION FROM V_CUSTOMER_MASTER WHERE CUSTOMER = '{0}'",V.Local.sCust,V.Local.sSql)
+	F.ODBC.Connection!dest.ExecuteAndReturn(v.Local.sSql,v.Local.sRet)
+	
+	'get the order number to use for the upload and to use for the intercompany event table
+	F.ODBC.Connection!dest.ExecuteAndReturn("select LAST_PO_NUM from LAST_PO where ass_sys = 'ORD' and ASS_SUB_SYS = 'NUM'",v.Local.iRow)
+	f.Intrinsic.String.LPad(v.Local.iRow.++,"0",7,v.Global.sOrder)
+	f.Intrinsic.String.Build("Update LAST_PO set LAST_PO_NUM = '{0}' where ass_sys = 'ORD' and ASS_SUB_SYS = 'NUM'",V.Global.sOrder,V.Local.sSql)
+	F.ODBC.Connection!dest.Execute(v.Local.sSql)
+
+	F.Intrinsic.Control.If(v.Local.sRet.IsNotNullOrWhiteSpace)
+		f.Intrinsic.String.Split(v.Local.sRet,"*!*",v.Local.sRet)
+		
+		f.Data.DataTable.AddRow("ORDUPLExtra","BillToName",v.Local.sRet(0),"BillToAddress1",v.Local.sRet(1),"BillToAddress2",v.Local.sRet(2),"BillToCity",v.Local.sRet(3),"BillToState",v.Local.sRet(4),"BillToZip",v.Local.sRet(5),"BillToAttention",v.Local.sRet(6))
+		
+		V.Local.iRow.Set(0)
+		f.Intrinsic.String.Split(v.Args.SODATA,v.Ambient.NewLine,v.Local.sLines)
+		f.Intrinsic.Control.For(v.Local.iCount,0,v.Local.sLines.UBound,1)
+			f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),8,3,v.Local.sType)
+			f.Intrinsic.Control.If(v.Local.sType.IsNotNullOrWhiteSpace)
+				f.Intrinsic.Control.SelectCase(v.Local.sType)
+					F.Intrinsic.Control.Case("  A")					
+						'get the order date and ship date
+					
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),196,6,v.Local.sTemp)
+						F.Intrinsic.Date.ConvertDString(v.Local.sTemp,"MMDDYY",V.Local.dOrderDue)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),208,6,V.Local.sTemp)
+						F.Intrinsic.Date.ConvertDString(v.Local.sTemp,"MMDDYY",V.Local.dOrderDate)
+						F.Intrinsic.String.Format(V.Local.dOrderDue,"YYYYMMDD",V.Local.sDueDate)
+						f.Intrinsic.String.Format(v.Local.dOrderDate,"YYYYMMDD",V.Local.sOrderDate)
+	
+						F.Data.DataTable.SetValue("ORDUPL",v.Local.iRow,"OrderNumber",v.Global.sOrder,"OrderDate",v.Local.sOrderDate,"OrderDueDate",v.Local.sDueDate)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),299,30,v.Local.sTemp)
+						f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"UserField1Head",v.Local.sTemp)
+						f.Intrinsic.String.Build("{0} : {1}",v.Caller.CompanyCode,V.Local.sLines(V.Local.iCount).LEFT7,V.Local.sVendPO)
+						f.Data.DataTable.SetValue("ORDUPL",V.LOCAL.iRow,"CustomerPO",v.Local.sVendPO)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),329,6,v.Local.sTemp)
+						f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToID",V.Local.sTemp)
+					
+					f.Intrinsic.Control.Case("  B")
+						'we don't need anything out of the type 'B' record but we stil have to account for it because of the 'CaseElse' requirement for line items
+					
+					f.Intrinsic.Control.Case("  C")
+					
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),11,30,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToName",V.Local.sTemp)
+							F.Data.DataTable.SetValue("ORDUPLExtra",v.Local.iRow,"ShipToName",v.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),41,30,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToAddress1",V.Local.sTemp)
+							F.Data.DataTable.SetValue("ORDUPLExtra",v.Local.iRow,"ShipToAddress1",v.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),71,30,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToAddress2",V.Local.sTemp)
+							F.Data.DataTable.SetValue("ORDUPLExtra",v.Local.iRow,"ShipToAddress2",v.Local.sTemp)
+						'if international shipto addresses are required, the poupload text file needs to be changed to include address3, 4, and 5
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),191,20,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToCity",V.Local.sTemp)
+							F.Data.DataTable.SetValue("ORDUPLExtra",v.Local.iRow,"ShipToCity",v.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),211,2,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToState",V.Local.sTemp)
+							F.Data.DataTable.SetValue("ORDUPLExtra",v.Local.iRow,"ShipToState",v.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),213,13,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPL",V.Local.iRow,"ShipToZip",V.Local.sTemp)
+							F.Data.DataTable.SetValue("ORDUPLExtra",v.Local.iRow,"ShipToZip",v.Local.sTemp)
+							
+					f.Intrinsic.Control.CaseElse
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),8,3,v.Local.sTemp)
+							f.Data.DataTable.AddRow("ORDUPLLines","LineNumber",v.Local.sTemp,"UserField5",v.Local.sVendPO)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),11,17,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"PARTNUMBER",V.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),28,3,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"PARTREV",V.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),31,2,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"PARTLOC",V.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),33,30,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"PARTDESC",V.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),63,2,v.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"UM",V.Local.sTemp)
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),137,16,v.Local.sTemp)
+						
+							'FORMAT THE PRICE
+						F.Intrinsic.String.IsInString(V.Local.sTemp,".",False,V.Local.bCheck)
+							f.Intrinsic.Control.If(v.Local.bCheck)
+								f.Intrinsic.String.Split(v.Local.sTemp,".",v.Local.sTemp)
+								f.Intrinsic.String.RPad(v.Local.sTemp(1).TRIM,"0",6,v.Local.sTemp(1))
+								f.Intrinsic.String.Build("{0}{1}",v.Local.sTemp(0).TRIM,v.Local.sTemp(1),v.Local.sTemp)
+								f.Intrinsic.String.LPad(v.Local.sTemp,"0",16,v.Local.sTemp)
+							f.Intrinsic.Control.Else
+								F.Intrinsic.String.LPad(V.Local.sTemp.Trim,"0",10,V.Local.sTemp)
+								F.Intrinsic.String.RPad(V.Local.sTemp.Trim,"0",16,V.Local.sTemp)
+							f.Intrinsic.Control.EndIf
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"QUOTEDPRICE",V.Local.sTemp,"OVERRIDEPRICE",V.Local.sTemp)
+							'FORMAT THE QUANTITY							
+						f.Intrinsic.String.Mid(v.Local.sLines(v.Local.iCount),169,16,v.Local.sTemp)
+							F.Intrinsic.String.Replace(V.Local.sTemp,".","",V.Local.sTemp)
+							F.Intrinsic.String.LPad(V.Local.sTemp.Trim,"0",13,V.Local.sTemp)
+							f.Data.DataTable.SetValue("ORDUPLLines",v.Local.iRow,"QtyOrdered",V.Local.sTemp.Trim)
+						'now that we're in to the lines, we have to increment iRow
+						f.Intrinsic.Math.Add(v.Local.iRow,1,v.Local.iRow)
+						
+				f.Intrinsic.Control.EndSelect
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.Next(v.Local.iCount)
+	'add the return variable for the company code
+	f.Intrinsic.Variable.AddRV("CCC",V.Local.sCoCode)
+	
+	F.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Else
+	F.ODBC.Connection!coredb.close
+	f.Intrinsic.Control.callsub(unload)
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.build_so_export.End
+
+Program.Sub.save_inter_co.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.sDate.Declare
+v.Local.sTime.Declare
+V.Local.iCount.Declare
+v.Local.sLine.Declare
+V.Local.sOrder.Declare
+
+
+f.Intrinsic.String.Format(v.Ambient.Date,"YYYYMMDD",V.Local.sDate)
+F.Intrinsic.String.Format(V.Ambient.Time,"HhNnSsSs",v.Local.sTime)
+'f.Intrinsic.String.LPad(v.Passed.000003,"0",7,v.Local.sOrder)
+
+f.Data.DataTable.CreateFromSQL("INTERCO","COREDB","SELECT TOP 0 ORGN_CMPNY, PO_NO, PO_LINE, ORDER_NO, ORDER_LINE, DEST_CMPNY, DEST_ORDER_NO, DEST_ORDER_LN,PART, FILL_PART, LOCN, CURR_CD, FILLER, DATE_LAST_CHG, TIME_LAST_CHG, LAST_CHG_BY, LAST_CHG_PGM FROM INTCMP_SO_EVNT",True)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.DataTable.ORDUPLLines.RowCount--,1)
+	F.Intrinsic.String.RPad(v.DataTable.ORDUPLLines(v.Local.iCount).LINENUMBER!FIELDVALTRIM,"0",4,V.Local.sLine)
+	
+	f.Data.DataTable.AddRow("INTERCO","ORGN_CMPNY",v.Caller.CompanyCode, "PO_NO",V.Global.sPO, "PO_LINE",V.Local.sLine,"DEST_CMPNY",V.Args.CCC, "DEST_ORDER_NO",v.Global.sOrder, "DEST_ORDER_LN",V.Local.sLine, "PART",v.DataTable.ORDUPLLines(v.Local.iCount).PARTNUMBER!FIELDVALSTRING, "LOCN",V.DataTable.ORDUPLLines(V.Local.iCount).PARTLOC!FIELDVALSTRING,"CURR_CD","USD", "DATE_LAST_CHG",V.Local.sDate, "TIME_LAST_CHG",V.Local.sTime, "LAST_CHG_BY",V.Caller.User, "LAST_CHG_PGM","ARC5653")
+
+
+f.Intrinsic.Control.Next(v.Local.iCount)
+	
+f.Data.DataTable.SaveToDB("INTERCO","COREDB","INTCMP_SO_EVNT","ORGN_CMPNY*!*PO_NO*!*PO_LINE",1)
+
+	F.Data.DataTable.DeleteRow("ORDUPL")
+	F.Data.DataTable.DeleteRow("ORDUPLEXTRA")
+	F.Data.DataTable.DeleteRow("ORDUPLLINES")
+
+F.Intrinsic.Control.ExitSub
+
+f.Intrinsic.Control.catch
+f.Intrinsic.Control.CallSub(catching,"sub",v.Ambient.CurrentSubroutine,"errorno",v.Ambient.ErrorNumber,"errordesc",v.Ambient.ErrorDescription)
+f.Intrinsic.Control.EndTry
+Program.Sub.save_inter_co.End
